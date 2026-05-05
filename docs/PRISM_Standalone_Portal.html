@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>PRISM — Patient Health Platform</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --brand:#2563EB;--brand-dark:#1D4ED8;--brand-light:#EFF6FF;
+  --bg:#F8FAFC;--surface:#FFFFFF;--border:#E2E8F0;--border-hover:#CBD5E1;
+  --text:#0F172A;--text-2:#475569;--text-3:#94A3B8;
+  --radius:8px;--radius-lg:12px;--shadow:0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md:0 4px 12px rgba(0,0,0,0.1);
+  --ca:#7C3AED;--dm:#2563EB;--cv:#DB2777;--mh:#059669;--rs:#D97706;
+}
+body{font-family:'Inter',sans-serif;font-size:14px;color:var(--text);background:var(--bg);min-height:100vh}
+button{cursor:pointer;font-family:inherit;font-size:13px;border:1px solid transparent;border-radius:var(--radius);padding:8px 16px;transition:all 0.15s}
+button:disabled{opacity:0.5;cursor:not-allowed}
+input,select,textarea{font-family:inherit;font-size:13px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;background:var(--surface);color:var(--text);width:100%;outline:none;transition:border-color 0.15s}
+input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(37,99,235,0.1)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;box-shadow:var(--shadow)}
+.btn-primary{background:var(--brand);color:#fff;border-color:var(--brand);font-weight:500}
+.btn-primary:hover:not(:disabled){background:var(--brand-dark);border-color:var(--brand-dark)}
+.btn-ghost{background:transparent;border-color:var(--border);color:var(--text-2)}
+.btn-ghost:hover:not(:disabled){background:var(--bg);border-color:var(--border-hover);color:var(--text)}
+@keyframes pulse{0%,100%{opacity:0.4}50%{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+
+/* ── CONFIG ─────────────────────────────────────── */
+// Replace this with your actual Anthropic API key
+// Get one free at: https://console.anthropic.com
+const ANTHROPIC_API_KEY = 'YOUR_ANTHROPIC_API_KEY_HERE';
+
+const DISEASES=[
+  {code:'CA',icon:'🎗',name:'Cancer Care',color:'#7C3AED',bg:'#F5F3FF',
+   agents:[
+    {id:'CA1',name:'Screening',icon:'🔬',
+     prompt:'You are CA1, PRISM Cancer Screening specialist. Provide concise, evidence-based answers about cancer screening (mammography, colonoscopy, PSA, HPV, BRCA). Cite ACS/USPSTF guidelines. Keep answers to 3-4 paragraphs. Always end with: consult your oncologist or primary care physician.',
+     qs:['When should I start mammogram screening?','My PSA is 5.2 — is that concerning?','HPV test vs Pap smear — what is the difference?','At 52, do I need a colonoscopy?','Should I get BRCA genetic testing?']},
+    {id:'CA2',name:'Treatment',icon:'💊',
+     prompt:'You are CA2, PRISM Cancer Treatment Navigator. Answer questions about chemotherapy, immunotherapy, targeted therapy, NCCN guidelines. Be clear and empathetic. Never recommend specific doses. Always suggest consulting their oncologist.',
+     qs:['What is HER2-positive breast cancer?','Neoadjuvant vs adjuvant chemotherapy?','What are FOLFOX side effects?','What does PD-L1 test mean?','Can I take supplements during chemo?']},
+    {id:'CA3',name:'Supportive',icon:'🌿',
+     prompt:'You are CA3, PRISM Cancer Supportive Care specialist. Help with nausea, pain, fatigue, nutrition, palliative care. Reference MASCC antiemetics, WHO pain ladder. Be compassionate.',
+     qs:['How to manage chemo nausea?','What can I eat during cancer treatment?','How to deal with cancer fatigue?','What is palliative care?','Managing mouth sores from chemo?']},
+    {id:'CA4',name:'Survivorship',icon:'🌟',
+     prompt:'You are CA4, PRISM Cancer Survivorship specialist. Guide post-treatment surveillance, late effects, chemo brain, lymphedema. ASCO survivorship guidelines. Validate fear of recurrence as normal.',
+     qs:['How often do I need follow-up scans?','What late effects of chemo should I watch for?','Managing lymphedema after breast surgery?','What is chemo brain?','When can I return to work?']},
+    {id:'CA5',name:'Genetics',icon:'🧬',
+     prompt:'You are CA5, PRISM Hereditary Cancer Genetics specialist. Guide on BRCA1/2, Lynch syndrome, genetic testing. Explain VUS compassionately. Always recommend a certified genetic counsellor.',
+     qs:['Should I get BRCA testing?','My mother had ovarian cancer — am I at risk?','What is Lynch syndrome?','What options if I test BRCA1 positive?','Should my children be tested?']},
+  ]},
+  {code:'DM',icon:'🩺',name:'Diabetes',color:'#2563EB',bg:'#EFF6FF',
+   agents:[
+    {id:'DM1',name:'Monitoring',icon:'📊',
+     prompt:'You are DM1, PRISM Diabetes Glucose Monitoring specialist. Answer questions about blood glucose, HbA1c, CGM, Time in Range, hypoglycaemia (15-15 rule). ADA 2024 guidelines. If DKA is suspected: say go to ER immediately.',
+     qs:['Fasting glucose 210 mg/dL — dangerous?','What HbA1c target should I aim for?','What is the 15-15 rule for low blood sugar?','What is Time in Range?','Dawn phenomenon vs Somogyi effect?']},
+    {id:'DM2',name:'Medication',icon:'💉',
+     prompt:'You are DM2, PRISM Diabetes Medication specialist. Explain metformin, GLP-1s (semaglutide), SGLT-2s, basal-bolus insulin. ADA/EASD 2024. Never recommend doses. Refer to prescriber.',
+     qs:['Metformin causing diarrhoea — what can I do?','Semaglutide vs liraglutide?','Do SGLT-2s protect the heart and kidneys?','What is basal-bolus insulin?','Metformin + SGLT-2 together — is it safe?']},
+    {id:'DM3',name:'Nutrition',icon:'🥗',
+     prompt:'You are DM3, PRISM Diabetes Nutrition specialist. ADA MNT, DIRECT trial, Mediterranean diet. Include LATAM food guidance (beans, tortillas, quinoa). Refer to dietitian for meal plans.',
+     qs:['Foods to avoid with type 2 diabetes?','Can I eat rice and tortillas?','How much exercise to lower blood sugar?','What is glycaemic index?','How to count carbohydrates?']},
+    {id:'DM4',name:'Complications',icon:'⚠️',
+     prompt:'You are DM4, PRISM Diabetes Complications specialist. Guide on nephropathy, retinopathy, neuropathy, foot care. KDIGO, ETDRS guidelines. Diabetic foot ulcer = urgent care today.',
+     qs:['Numbness in feet — diabetic neuropathy?','eGFR is declining — related to diabetes?','How to prevent diabetic foot ulcers?','Protein in urine — what does that mean?','How often should I get eye checks?']},
+    {id:'DM5',name:'Gestational',icon:'🤱',
+     prompt:'You are DM5, PRISM Gestational Diabetes specialist. Guide on GDM (ADA/ACOG), paediatric type 1 (ISPAD), elderly frailty. Paediatric DKA: ER immediately. Postpartum: 6-8 week OGTT always.',
+     qs:['Gestational diabetes — what does it mean for my baby?','Blood sugar targets during pregnancy?','Child diagnosed type 1 — how to manage school?','Diabetes at age 75 — different targets?','Can GDM come back?']},
+  ]},
+  {code:'CV',icon:'❤️',name:'Cardiovascular',color:'#DB2777',bg:'#FDF2F8',
+   agents:[
+    {id:'CV1',name:'Clinical',icon:'❤️',
+     prompt:'You are CV1, PRISM Cardiovascular Clinical specialist. Guide on hypertension, heart failure (HFrEF/HFpEF), atrial fibrillation. ACC/AHA 2022. Chest pain or syncope: go to ER immediately.',
+     qs:['BP 148/92 — do I have hypertension?','LDL 168 after heart attack — need a statin?','Why SGLT-2 for non-diabetic heart failure?','Difference between HFrEF and HFpEF?','AF — do I need a blood thinner?']},
+    {id:'CV2',name:'Emergency',icon:'🚨',
+     prompt:'You are CV2, PRISM Cardiac Emergency specialist. HIGHEST PRIORITY. For ANY chest pain, stroke signs, or cardiac arrest: CALL 911 NOW. STEMI: chew aspirin 325mg. STROKE: FAST signs. CPR: 100-120/min.',
+     qs:['Severe chest pain radiating to my arm — what to do?','What are the FAST stroke signs?','Someone collapsed — I do not know CPR?','Hypertensive emergency vs urgency?','D-dimer elevated after long flight?']},
+    {id:'CV3',name:'Medications',icon:'💊',
+     prompt:'You are CV3, PRISM Cardiovascular Medications specialist. Explain ACEi, ARB, ARNI, beta-blockers, DOACs, warfarin. NSAIDs in HF: always contraindicated. Refer to cardiologist for changes.',
+     qs:['Lisinopril causing dry cough — what do I do?','Why beta-blocker if my heart is weak?','What is sacubitril/valsartan?','Ibuprofen safe with heart failure meds?','Which foods affect warfarin?']},
+    {id:'CV4',name:'Rehab',icon:'🏃',
+     prompt:'You are CV4, PRISM Cardiac Rehabilitation specialist. Exercise for HF, post-MI, post-CABG. HF-ACTION trial. Post-CABG: no lifting >2.25kg for 8 weeks. Stop if chest pain, BP >200/110.',
+     qs:['What does cardiac rehabilitation involve?','Target heart rate zone with heart failure?','Resistance training safe after bypass surgery?','No rehab centre nearby — alternatives?','How does exercise help a weak heart?']},
+    {id:'CV5',name:'Nutrition',icon:'🥗',
+     prompt:'You are CV5, PRISM Cardiac Nutrition specialist. DASH diet (8-14 mmHg reduction), Mediterranean (PREDIMED), omega-3 REDUCE-IT. Triglycerides >1000: urgent review. Never eliminate cultural staple foods.',
+     qs:['What is the DASH diet?','Triglycerides 480 mg/dL — what to cut?','Do omega-3 supplements help the heart?','Mediterranean diet realistic in Brazil?','What LATAM foods are heart-healthy?']},
+  ]},
+  {code:'MH',icon:'🧠',name:'Mental Health',color:'#059669',bg:'#F0FDF4',
+   agents:[
+    {id:'MH1',name:'Depression',icon:'🧠',
+     prompt:'You are MH1, PRISM Depression Assessment specialist. Screen PHQ-9, explain SSRIs/SNRIs/CBT. ALWAYS screen for suicidal ideation — if detected, provide 988 crisis line immediately. Validate seeking help. Never diagnose.',
+     qs:['Depression vs sadness — how do I know?','SSRIs vs SNRIs — what is the difference?','How long do antidepressants take to work?','Can depression be treated without medication?','PHQ-9 score of 15 — what does that mean?']},
+    {id:'MH2',name:'Anxiety',icon:'💚',
+     prompt:'You are MH2, PRISM Anxiety Management specialist. GAD-7 assessment, CBT evidence, SSRI in GAD, benzodiazepine risks (max 2-4 weeks). First panic attack: recommend cardiac rule-out. NICE CG113.',
+     qs:['How do I know if I have an anxiety disorder?','Panic attack vs heart attack — what is the difference?','Can breathing exercises help anxiety?','What medications treat anxiety?','How does CBT work for anxiety?']},
+    {id:'MH3',name:'Sleep',icon:'🌙',
+     prompt:'You are MH3, PRISM Sleep and Wellness specialist. CBT-I first approach (sleep restriction + stimulus control). Melatonin: modest evidence, 0.5-5mg. Z-drugs: max 2-4 weeks, driving risk. AASM guidelines.',
+     qs:['How to fix insomnia without sleeping pills?','What is CBT-I for sleep?','Does melatonin actually work?','How does poor sleep affect mental health?','What is the best sleep hygiene routine?']},
+    {id:'MH4',name:'Trauma',icon:'🛡️',
+     prompt:'You are MH4, PRISM Trauma and PTSD specialist. PCL-5 screening, EMDR, Prolonged Exposure, CPT. Domestic violence: ALWAYS provide safety plan and DV hotline first. APA/ISTSS guidelines.',
+     qs:['What are the symptoms of PTSD?','How is PTSD treated — what is EMDR?','I experienced domestic violence — how do I get help?','What are ACEs and how do they affect health?','How to deal with trauma flashbacks?']},
+    {id:'MH5',name:'Crisis',icon:'🆘',
+     prompt:'You are MH5, PRISM Crisis and Suicide Prevention specialist. CRITICAL SAFETY AGENT. For ANY suicidal ideation: immediately provide crisis lines — 988 (USA), CVV 188 (Brazil), 800-290-0024 (Mexico). Express genuine care. Safety plan. Never minimise.',
+     qs:['I am having thoughts of harming myself — what do I do?','How to help a friend wanting to die?','Warning signs someone may be suicidal?','I feel like I cannot go on — who can I talk to?','What is a safety plan and how do I make one?']},
+  ]},
+  {code:'RS',icon:'🫁',name:'Respiratory',color:'#D97706',bg:'#FFFBEB',
+   agents:[
+    {id:'RS1',name:'Asthma',icon:'🫁',
+     prompt:'You are RS1, PRISM Asthma Management specialist. GINA 2024 step therapy, inhaler technique, trigger avoidance, action plans. Acute severe: SABA ineffective + SpO2<92% → ER immediately. Beta-blockers contraindicated in asthma.',
+     qs:['How do I use my rescue inhaler correctly?','Rescue vs preventer inhaler — difference?','Asthma worse at night — why?','What triggers should I avoid?','When to go to ER for an asthma attack?']},
+    {id:'RS2',name:'COPD',icon:'🌬️',
+     prompt:'You are RS2, PRISM COPD Management specialist. GOLD 2024: groups A/B/E, LAMA/LABA/ICS selection, exacerbation prevention. Roflumilast: check depression history. Smoking cessation: varenicline most effective. Never judge.',
+     qs:['COPD staging — what does FEV1 mean?','Best inhaler for COPD?','When do I need home oxygen therapy?','How to prevent COPD exacerbations?','How to quit smoking to help COPD?']},
+    {id:'RS3',name:'Rehab',icon:'💨',
+     prompt:'You are RS3, PRISM Pulmonary Rehabilitation specialist. ATS/ERS PR Statement 2023. Pursed-lip breathing, diaphragmatic breathing, 6MWT. Home PR is equivalent to centre-based (Cochrane evidence). Stop if SpO2<85%.',
+     qs:['Breathing exercises that help COPD?','What is pulmonary rehabilitation?','How to improve my breathing capacity?','What is pursed-lip breathing?','Can exercise actually help my lungs?']},
+    {id:'RS4',name:'Medications',icon:'💊',
+     prompt:'You are RS4, PRISM Respiratory Medications specialist. MDI/DPI/SMI device selection, spacer technique, ICS side effects (rinse mouth). Montelukast: FDA black box neuropsychiatric warning — always inform patients.',
+     qs:['How to use a spacer with my inhaler?','Side effects of inhaled steroids?','Nebuliser or inhaler — which is better?','What is montelukast used for?','Can I take azithromycin long-term for COPD?']},
+    {id:'RS5',name:'Sleep Apnea',icon:'🌙',
+     prompt:'You are RS5, PRISM Sleep Apnea specialist. AASM OSA guidelines. AHI: mild 5-14, moderate 15-29, severe ≥30. CPAP adherence: 4+ hr/night. OHS with hypercapnia: BiPAP. Commercial driver with severe OSA: advise physician report.',
+     qs:['How do I know if I have sleep apnea?','What is CPAP and how does it work?','My partner says I stop breathing at night?','Does sleep apnea affect my heart?','Alternatives to CPAP for sleep apnea?']},
+  ]},
+];
+const TIERS=[
+  {id:'free',name:'Free',price:0,diseases:1,msgs:5,multi:false,color:'#64748B'},
+  {id:'basic',name:'Basic',price:9,diseases:3,msgs:50,multi:false,color:'#2563EB'},
+  {id:'premium',name:'Premium',price:29,diseases:5,msgs:200,multi:true,color:'#7C3AED',popular:true},
+  {id:'enterprise',name:'Enterprise',price:99,diseases:5,msgs:-1,multi:true,color:'#059669'},
+];
+const DEMO_PATIENTS=[
+  {id:'p1',email:'maria@example.com',name:'Maria González',password:'demo123',role:'patient',subscription:'premium',diseases:['DM','CV','MH'],joined:'2025-01-15',lastActive:'2025-04-28',
+   conversations:[{id:'c1',agent:'DM1',disease:'DM',msgs:8,date:'2025-04-28',lastMsg:'What HbA1c target should I aim for?'},{id:'c2',agent:'CV1',disease:'CV',msgs:5,date:'2025-04-25',lastMsg:'BP 148/92 — do I have hypertension?'}],
+   feedback:[{rating:5,comment:'Very helpful and accurate!',agent:'DM1',date:'2025-04-28'}]},
+  {id:'p2',email:'ravi@example.com',name:'Dr. Ravi Kumar',password:'demo123',role:'patient',subscription:'basic',diseases:['CA','DM'],joined:'2025-02-20',lastActive:'2025-04-27',
+   conversations:[{id:'c3',agent:'CA1',disease:'CA',msgs:12,date:'2025-04-27',lastMsg:'Should I get a BRCA test?'}],
+   feedback:[{rating:4,comment:'Good guidance on screening',agent:'CA1',date:'2025-04-27'}]},
+  {id:'p3',email:'ana@example.com',name:'Ana Beatriz Silva',password:'demo123',role:'patient',subscription:'free',diseases:['RS'],joined:'2025-03-10',lastActive:'2025-04-20',
+   conversations:[{id:'c4',agent:'RS1',disease:'RS',msgs:6,date:'2025-04-20',lastMsg:'How to use my rescue inhaler?'}],
+   feedback:[]},
+];
+
+/* ── UTILS ──────────────────────────────────────── */
+function TierBadge({tier}){
+  const cfg={free:{bg:'#F1F5F9',c:'#64748B'},basic:{bg:'#EFF6FF',c:'#2563EB'},premium:{bg:'#F5F3FF',c:'#7C3AED'},enterprise:{bg:'#F0FDF4',c:'#059669'}};
+  const s=cfg[tier]||cfg.free;
+  return <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:s.bg,color:s.c,fontWeight:500,border:`1px solid ${s.c}30`}}>{tier||'free'}</span>;
+}
+
+function MarkdownText({text}){
+  const lines=text.split('\n');
+  return <div style={{lineHeight:1.65}}>{lines.map((line,i)=>{
+    const bold=line.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
+    if(line.startsWith('### '))return <div key={i} style={{fontWeight:600,fontSize:13,marginTop:10,marginBottom:4}}>{line.slice(4)}</div>;
+    if(line.startsWith('## '))return <div key={i} style={{fontWeight:600,fontSize:14,marginTop:12,marginBottom:6}}>{line.slice(3)}</div>;
+    if(line.startsWith('- ')||line.startsWith('• '))return <div key={i} style={{paddingLeft:12,marginBottom:2,display:'flex',gap:6}}><span>•</span><span dangerouslySetInnerHTML={{__html:bold.slice(2)}}/></div>;
+    if(line.trim()==='')return <div key={i} style={{height:6}}/>;
+    return <div key={i} dangerouslySetInnerHTML={{__html:bold}} style={{marginBottom:2}}/>;
+  })}</div>;
+}
+
+/* ── APP ────────────────────────────────────────── */
+export default function App(){
+  const [view,setView]=useState('landing');
+  const [user,setUser]=useState(null);
+  const [patients,setPatients]=useState(DEMO_PATIENTS);
+  const [selDisease,setSelDisease]=useState(null);
+  const [selAgent,setSelAgent]=useState(null);
+  const [messages,setMessages]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [input,setInput]=useState('');
+  const [adminSec,setAdminSec]=useState('overview');
+  const [regData,setRegData]=useState({name:'',email:'',password:''});
+  const [loginData,setLoginData]=useState({email:'',password:''});
+  const [authMode,setAuthMode]=useState('login');
+  const [authErr,setAuthErr]=useState('');
+  const [tier,setTier]=useState('free');
+  const [subDiseases,setSubDiseases]=useState([]);
+
+  const go=(v)=>{setView(v);setAuthErr('');};
+
+  const patientAuth=()=>{
+    if(authMode==='login'){
+      const p=patients.find(x=>x.email===loginData.email&&x.password===loginData.password);
+      if(p){setUser(p);go('chat');}else setAuthErr('Invalid credentials. Demo: maria@example.com / demo123');
+    }else{
+      if(!regData.name||!regData.email||!regData.password){setAuthErr('All fields are required');return;}
+      const np={id:'p'+Date.now(),email:regData.email,name:regData.name,password:regData.password,
+        role:'patient',subscription:'free',diseases:[],joined:new Date().toISOString().slice(0,10),
+        lastActive:new Date().toISOString().slice(0,10),conversations:[],feedback:[]};
+      setPatients(p=>[...p,np]);setUser(np);go('subscribe');
+    }
+  };
+
+  const adminAuth=()=>{
+    if(loginData.email==='admin@prism.ai'&&loginData.password==='admin123'){
+      setUser({id:'admin',email:'admin@prism.ai',name:'PRISM Admin',role:'admin'});go('admin');
+    }else setAuthErr('Invalid admin credentials. Use: admin@prism.ai / admin123');
+  };
+
+  const subscribe=()=>{
+    const t=TIERS.find(x=>x.id===tier);
+    const updated={...user,subscription:tier,diseases:subDiseases.slice(0,t.diseases)};
+    setUser(updated);setPatients(p=>p.map(x=>x.id===user.id?{...x,...updated}:x));go('chat');
+  };
+
+  const sendMsg=async(txt)=>{
+    const msg=txt||input.trim();
+    if(!msg||!selAgent)return;
+    setInput('');
+    const um={role:'user',content:msg,id:Date.now()};
+    setMessages(m=>[...m,um]);setLoading(true);
+    try{
+      const res=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514',max_tokens:1000,
+          system:selAgent.prompt+'\n\nKeep answers to 3-4 concise paragraphs. Use plain markdown. End with Evidence Grade (A/B/C) and one actionable next step.',
+          messages:[...messages.map(m=>({role:m.role,content:m.content})),{role:'user',content:msg}]
+        })
+      });
+      const data=await res.json();
+      const txt2=data.content?.[0]?.text||'I encountered an error. Please try again.';
+      setMessages(m=>[...m,{role:'assistant',content:txt2,id:Date.now()+1}]);
+    }catch{
+      setMessages(m=>[...m,{role:'assistant',content:'⚠️ Could not reach AI. Check your API key in the ANTHROPIC_API_KEY variable and try again.',id:Date.now()+1}]);
+    }
+    setLoading(false);
+  };
+
+  const logout=()=>{setUser(null);setView('landing');setMessages([]);setSelDisease(null);setSelAgent(null);};
+
+  if(view==='landing')return <Landing onPatient={()=>go('patient-auth')} onAdmin={()=>go('admin-auth')}/>;
+  if(view==='patient-auth')return <PatientAuth authMode={authMode} setAuthMode={setAuthMode} loginData={loginData} setLoginData={setLoginData} regData={regData} setRegData={setRegData} authErr={authErr} onSubmit={patientAuth} onBack={()=>go('landing')}/>;
+  if(view==='admin-auth')return <AdminAuth loginData={loginData} setLoginData={setLoginData} authErr={authErr} onSubmit={adminAuth} onBack={()=>go('landing')}/>;
+  if(view==='subscribe')return <Subscribe user={user} tier={tier} setTier={setTier} subDiseases={subDiseases} setSubDiseases={setSubDiseases} onSubmit={subscribe}/>;
+  if(view==='chat')return <PatientChat user={user} selDisease={selDisease} selAgent={selAgent} messages={messages} loading={loading} input={input} setInput={setInput} sendMsg={sendMsg} onSelect={(d,a)=>{setSelDisease(d);setSelAgent(a);setMessages([]);}} onSubscribe={()=>go('subscribe')} logout={logout}/>;
+  if(view==='admin')return <AdminPortal patients={patients} sec={adminSec} setSec={setAdminSec} logout={logout}/>;
+  return null;
+}
+
+/* ── LANDING ───────────────────────────────────── */
+function Landing({onPatient,onAdmin}){
+  return (
+    <div style={{minHeight:'100vh',background:'var(--bg)'}}>
+      <nav style={{background:'var(--surface)',borderBottom:'1px solid var(--border)',padding:'0 24px',height:56,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:32,height:32,borderRadius:8,background:'var(--brand)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:15}}>P</div>
+          <span style={{fontWeight:600,fontSize:15}}>PRISM</span>
+          <span style={{fontSize:11,color:'var(--text-3)',marginLeft:4,fontFamily:'JetBrains Mono,monospace'}}>v2.0</span>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn-ghost" style={{padding:'6px 14px'}} onClick={onPatient}>Patient Login</button>
+          <button className="btn-primary" style={{padding:'6px 14px'}} onClick={onAdmin}>Admin Login</button>
+        </div>
+      </nav>
+      <div style={{maxWidth:900,margin:'0 auto',padding:'4rem 1.5rem 2rem',textAlign:'center'}}>
+        <div style={{display:'inline-flex',alignItems:'center',gap:6,background:'#EFF6FF',border:'1px solid #BFDBFE',borderRadius:999,padding:'4px 14px',fontSize:11,color:'#1D4ED8',fontWeight:500,marginBottom:20}}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:'#2563EB'}}/>
+          Patient-centric Retrieval Intelligence System for Medicine
+        </div>
+        <h1 style={{fontSize:clamp(28,42),fontWeight:600,lineHeight:1.2,marginBottom:12}}>
+          AI Health Specialists for<br/>
+          <span style={{color:'var(--brand)'}}>5 Critical Disease Domains</span>
+        </h1>
+        <p style={{fontSize:15,color:'var(--text-2)',maxWidth:540,margin:'0 auto 2rem',lineHeight:1.65}}>
+          Subscribe to your disease domain and get evidence-based guidance from 25 specialised AI agents — Cancer, Diabetes, Cardiovascular, Mental Health, and Respiratory care.
+        </p>
+        <div style={{display:'flex',gap:12,justifyContent:'center',marginBottom:40,flexWrap:'wrap'}}>
+          <button className="btn-primary" style={{fontSize:14,padding:'12px 28px',borderRadius:10,display:'flex',alignItems:'center',gap:8}} onClick={onPatient}>
+            🏥 Enter Patient Portal
+          </button>
+          <button className="btn-ghost" style={{fontSize:14,padding:'12px 28px',borderRadius:10,display:'flex',alignItems:'center',gap:8}} onClick={onAdmin}>
+            🔐 Admin Dashboard
+          </button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:32}}>
+          {[['25','AI Agents'],['5','Diseases'],['5','Languages'],['19D','Quality Gate'],['3','Agent Tiers']].map(([v,l])=>(
+            <div key={l} className="card" style={{padding:'14px 10px',textAlign:'center'}}>
+              <div style={{fontSize:22,fontWeight:600,color:'var(--brand)'}}>{v}</div>
+              <div style={{fontSize:11,color:'var(--text-2)',marginTop:3}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(155px,1fr))',gap:10}}>
+          {DISEASES.map(d=>(
+            <div key={d.code} className="card" style={{textAlign:'left',borderTop:`3px solid ${d.color}`,padding:'12px 14px'}}>
+              <div style={{fontSize:22,marginBottom:6}}>{d.icon}</div>
+              <div style={{fontWeight:600,fontSize:12,color:d.color,marginBottom:6}}>{d.name}</div>
+              {d.agents.map(a=><div key={a.id} style={{fontSize:11,color:'var(--text-2)',display:'flex',alignItems:'center',gap:5,marginBottom:2}}><span style={{width:4,height:4,borderRadius:'50%',background:d.color,display:'inline-block'}}/>{a.name}</div>)}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+function clamp(min,max){return `clamp(${min}px, 4vw, ${max}px)`;}
+
+/* ── PATIENT AUTH ──────────────────────────────── */
+function PatientAuth({authMode,setAuthMode,loginData,setLoginData,regData,setRegData,authErr,onSubmit,onBack}){
+  return (
+    <div style={{minHeight:'100vh',background:'var(--bg)',display:'flex',flexDirection:'column'}}>
+      <NavBar right={<button className="btn-ghost" style={{fontSize:12,padding:'6px 12px'}} onClick={onBack}>← Back</button>}/>
+      <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem'}}>
+        <div style={{width:'100%',maxWidth:380}}>
+          <div className="card">
+            <div style={{textAlign:'center',marginBottom:20}}>
+              <div style={{fontSize:32,marginBottom:8}}>🏥</div>
+              <h2 style={{fontSize:18,fontWeight:600}}>Patient Portal</h2>
+              <p style={{fontSize:12,color:'var(--text-2)',marginTop:4}}>Access your AI health agents</p>
+            </div>
+            <div style={{display:'flex',background:'var(--bg)',borderRadius:8,padding:3,gap:3,marginBottom:18}}>
+              {['login','register'].map(m=>(
+                <button key={m} onClick={()=>setAuthMode(m)} style={{flex:1,padding:'6px 0',borderRadius:6,fontSize:12,fontWeight:authMode===m?600:400,background:authMode===m?'var(--surface)':'transparent',color:authMode===m?'var(--text)':'var(--text-2)',border:'none',boxShadow:authMode===m?'0 1px 3px rgba(0,0,0,0.1)':'none',cursor:'pointer'}}>
+                  {m==='login'?'Sign In':'Create Account'}
+                </button>
+              ))}
+            </div>
+            {authMode==='register'&&<Field label="Full Name" value={regData.name} onChange={v=>setRegData(d=>({...d,name:v}))} placeholder="Maria González"/>}
+            <Field label="Email" type="email" value={authMode==='login'?loginData.email:regData.email} onChange={v=>authMode==='login'?setLoginData(d=>({...d,email:v})):setRegData(d=>({...d,email:v}))} placeholder="you@example.com"/>
+            <Field label="Password" type="password" value={authMode==='login'?loginData.password:regData.password} onChange={v=>authMode==='login'?setLoginData(d=>({...d,password:v})):setRegData(d=>({...d,password:v}))} placeholder="••••••••"/>
+            {authErr&&<div style={{background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#DC2626',marginBottom:12}}>{authErr}</div>}
+            <button className="btn-primary" style={{width:'100%',padding:'10px',fontSize:13,fontWeight:500,marginTop:4}} onClick={onSubmit}>
+              {authMode==='login'?'Sign In to PRISM':'Create Account'}
+            </button>
+            <div style={{marginTop:14,padding:'10px 12px',background:'var(--bg)',borderRadius:8,fontSize:11,color:'var(--text-2)',border:'1px solid var(--border)'}}>
+              <div style={{fontWeight:500,marginBottom:3}}>Demo accounts:</div>
+              <div>maria@example.com / demo123 (Premium)</div>
+              <div>ravi@example.com / demo123 (Basic)</div>
+              <div>ana@example.com / demo123 (Free)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── ADMIN AUTH ────────────────────────────────── */
+function AdminAuth({loginData,setLoginData,authErr,onSubmit,onBack}){
+  return (
+    <div style={{minHeight:'100vh',background:'var(--bg)',display:'flex',flexDirection:'column'}}>
+      <NavBar right={<button className="btn-ghost" style={{fontSize:12,padding:'6px 12px'}} onClick={onBack}>← Back</button>}/>
+      <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem'}}>
+        <div style={{width:'100%',maxWidth:360}}>
+          <div className="card">
+            <div style={{textAlign:'center',marginBottom:20}}>
+              <div style={{fontSize:32,marginBottom:8}}>🔐</div>
+              <h2 style={{fontSize:18,fontWeight:600}}>Admin Portal</h2>
+              <p style={{fontSize:12,color:'var(--text-2)',marginTop:4}}>PRISM platform administration</p>
+            </div>
+            <Field label="Admin Email" type="email" value={loginData.email} onChange={v=>setLoginData(d=>({...d,email:v}))} placeholder="admin@prism.ai"/>
+            <Field label="Password" type="password" value={loginData.password} onChange={v=>setLoginData(d=>({...d,password:v}))} placeholder="••••••••"/>
+            {authErr&&<div style={{background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#DC2626',marginBottom:12}}>{authErr}</div>}
+            <button className="btn-primary" style={{width:'100%',padding:'10px',fontSize:13,fontWeight:500}} onClick={onSubmit}>Admin Sign In</button>
+            <div style={{marginTop:14,padding:'10px 12px',background:'var(--bg)',borderRadius:8,fontSize:11,color:'var(--text-2)',border:'1px solid var(--border)'}}>
+              <div style={{fontWeight:500,marginBottom:2}}>Admin credentials:</div>
+              <div>admin@prism.ai / admin123</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── SUBSCRIBE ─────────────────────────────────── */
+function Subscribe({user,tier,setTier,subDiseases,setSubDiseases,onSubmit}){
+  const t=TIERS.find(x=>x.id===tier)||TIERS[0];
+  const toggle=(code)=>setSubDiseases(prev=>prev.includes(code)?prev.filter(c=>c!==code):prev.length<t.diseases?[...prev,code]:prev);
+  return (
+    <div style={{minHeight:'100vh',background:'var(--bg)'}}>
+      <NavBar/>
+      <div style={{maxWidth:820,margin:'0 auto',padding:'2rem 1.5rem'}}>
+        <div style={{textAlign:'center',marginBottom:24}}>
+          <h2 style={{fontSize:22,fontWeight:600}}>Choose Your Plan</h2>
+          <p style={{fontSize:13,color:'var(--text-2)',marginTop:6}}>Welcome, {user?.name}! Select a subscription tier and your disease domains.</p>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:10,marginBottom:20}}>
+          {TIERS.map(t2=>(
+            <div key={t2.id} onClick={()=>{setTier(t2.id);setSubDiseases([]);}} className="card" style={{cursor:'pointer',border:`2px solid ${tier===t2.id?t2.color:'var(--border)'}`,textAlign:'center',position:'relative',padding:'1rem 0.75rem',transition:'all 0.15s'}}>
+              {t2.popular&&<div style={{position:'absolute',top:-10,left:'50%',transform:'translateX(-50%)',background:t2.color,color:'#fff',fontSize:10,fontWeight:600,padding:'2px 10px',borderRadius:999}}>POPULAR</div>}
+              <div style={{fontSize:22,fontWeight:600,color:t2.color,marginBottom:4}}>${t2.price}</div>
+              <div style={{fontWeight:600,fontSize:13,marginBottom:10}}>{t2.name}</div>
+              <div style={{fontSize:11,color:'var(--text-2)',lineHeight:1.8}}>
+                <div>✓ {t2.diseases} disease{t2.diseases>1?'s':''}</div>
+                <div>✓ {t2.msgs===-1?'Unlimited':t2.msgs} msgs/day</div>
+                <div>{t2.multi?'✓':'✗'} Multimodal</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="card" style={{marginBottom:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+            <div style={{fontWeight:600,fontSize:14}}>Select Disease Domains</div>
+            <div style={{fontSize:12,color:'var(--text-2)'}}>{subDiseases.length}/{t.diseases} selected</div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:8}}>
+            {DISEASES.map(d=>{
+              const sel=subDiseases.includes(d.code),dis=!sel&&subDiseases.length>=t.diseases;
+              return (
+                <div key={d.code} onClick={()=>!dis&&toggle(d.code)} style={{border:`2px solid ${sel?d.color:'var(--border)'}`,borderRadius:10,padding:'14px 10px',cursor:dis?'not-allowed':'pointer',opacity:dis?0.4:1,textAlign:'center',background:sel?d.bg:'var(--surface)',transition:'all 0.15s'}}>
+                  <div style={{fontSize:26,marginBottom:6}}>{d.icon}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:sel?d.color:'var(--text)'}}>{d.name}</div>
+                  {sel&&<div style={{fontSize:10,color:d.color,marginTop:4}}>✓ Selected</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{display:'flex',justifyContent:'flex-end',gap:10}}>
+          <button className="btn-ghost" onClick={onSubmit}>Skip for now</button>
+          <button className="btn-primary" style={{padding:'10px 28px'}} disabled={subDiseases.length===0} onClick={onSubmit}>Activate Subscription →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── PATIENT CHAT ─────────────────────────────── */
+function PatientChat({user,selDisease,selAgent,messages,loading,input,setInput,sendMsg,onSelect,onSubscribe,logout}){
+  const endRef=useRef(null);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'});},[messages,loading]);
+  const subs=user?.diseases||[];
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'100vh',background:'var(--bg)'}}>
+      <NavBar user={user} right={
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {subs.length===0&&<button className="btn-primary" style={{fontSize:12,padding:'6px 14px'}} onClick={onSubscribe}>Subscribe to Disease</button>}
+          <button className="btn-ghost" style={{fontSize:12,padding:'6px 12px'}} onClick={logout}>Sign out</button>
+        </div>
+      }/>
+      <div style={{display:'flex',flex:1,overflow:'hidden'}}>
+        <aside style={{width:200,background:'var(--surface)',borderRight:'1px solid var(--border)',overflowY:'auto',flexShrink:0}}>
+          <div style={{padding:'10px 8px'}}>
+            <div style={{fontSize:10,fontWeight:600,color:'var(--text-3)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:8,padding:'0 6px'}}>Disease Domains</div>
+            {DISEASES.map(d=>{
+              const has=subs.includes(d.code),active=selDisease?.code===d.code;
+              return (
+                <div key={d.code}>
+                  <button onClick={()=>{if(!has){onSubscribe();return;}if(d.agents[0])onSelect(d,d.agents[0]);}} style={{width:'100%',textAlign:'left',padding:'7px 8px',borderRadius:8,border:'none',background:active?d.bg:'transparent',color:active?d.color:'var(--text-2)',fontWeight:active?600:400,fontSize:12,display:'flex',alignItems:'center',gap:7,opacity:has?1:0.45,cursor:'pointer',marginBottom:2}}>
+                    <span style={{fontSize:14}}>{d.icon}</span>{d.name}{!has&&<span style={{marginLeft:'auto',fontSize:10}}>🔒</span>}
+                  </button>
+                  {active&&(
+                    <div style={{paddingLeft:8,marginBottom:6}}>
+                      {d.agents.map(a=>(
+                        <button key={a.id} onClick={()=>onSelect(d,a)} style={{width:'100%',textAlign:'left',padding:'5px 8px',borderRadius:6,border:`1px solid ${selAgent?.id===a.id?d.color+'50':'transparent'}`,background:selAgent?.id===a.id?d.bg:'transparent',color:selAgent?.id===a.id?d.color:'var(--text-2)',fontSize:11,display:'flex',alignItems:'center',gap:6,cursor:'pointer',marginBottom:2}}>
+                          <span style={{fontSize:11}}>{a.icon}</span>{a.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+        <main style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+          {selAgent&&(
+            <div style={{padding:'10px 16px',background:'var(--surface)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:10}}>
+              <div style={{width:34,height:34,borderRadius:8,background:selDisease?.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>{selAgent.icon}</div>
+              <div>
+                <div style={{fontWeight:600,fontSize:13}}>{selAgent.name} Specialist</div>
+                <div style={{fontSize:11,color:'var(--text-2)'}}>{selAgent.id} · {selDisease?.name}</div>
+              </div>
+            </div>
+          )}
+          <div style={{flex:1,overflowY:'auto',padding:16}}>
+            {!selAgent&&(
+              <div style={{height:'100%',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:12,color:'var(--text-2)'}}>
+                <div style={{fontSize:48}}>👆</div>
+                <div style={{fontSize:14,fontWeight:500,textAlign:'center'}}>
+                  {subs.length===0?'Subscribe to a disease domain to begin':'Select a disease and agent from the sidebar'}
+                </div>
+                {subs.length===0&&<button className="btn-primary" style={{marginTop:8,padding:'8px 20px'}} onClick={onSubscribe}>Choose a Plan</button>}
+              </div>
+            )}
+            {selAgent&&messages.length===0&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,color:'var(--text-2)',marginBottom:10,fontWeight:500}}>Suggested questions for {selAgent.name}:</div>
+                <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                  {selAgent.qs.map((q,i)=>(
+                    <button key={i} onClick={()=>sendMsg(q)} style={{textAlign:'left',padding:'10px 14px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,fontSize:12,color:'var(--text)',cursor:'pointer',display:'flex',alignItems:'flex-start',gap:8}}>
+                      <span style={{fontSize:10,fontWeight:600,color:selDisease?.color,fontFamily:'monospace',paddingTop:2,flexShrink:0}}>{String(i+1).padStart(2,'0')}</span>{q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {messages.map(m=>(
+              <div key={m.id} style={{display:'flex',gap:10,marginBottom:14,flexDirection:m.role==='user'?'row-reverse':'row'}}>
+                <div style={{width:30,height:30,borderRadius:m.role==='user'?'50%':8,background:m.role==='user'?'var(--bg)':selDisease?.color||'#2563EB',border:m.role==='user'?'1px solid var(--border)':'none',display:'flex',alignItems:'center',justifyContent:'center',fontSize:m.role==='user'?11:10,color:m.role==='user'?'var(--text-2)':'#fff',fontWeight:600,flexShrink:0}}>
+                  {m.role==='user'?'You':'AI'}
+                </div>
+                <div className="card" style={{maxWidth:'76%',padding:'10px 14px',fontSize:13,background:m.role==='user'?'var(--bg)':'var(--surface)'}}>
+                  <MarkdownText text={m.content}/>
+                </div>
+              </div>
+            ))}
+            {loading&&(
+              <div style={{display:'flex',gap:10,marginBottom:14}}>
+                <div style={{width:30,height:30,borderRadius:8,background:selDisease?.color||'#2563EB',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff',fontWeight:600,flexShrink:0}}>AI</div>
+                <div className="card" style={{padding:'12px 16px'}}>
+                  <div style={{display:'flex',gap:5}}>
+                    {[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:'50%',background:'var(--border)',animation:`pulse 1.2s ease ${i*0.2}s infinite`}}/>)}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={endRef}/>
+          </div>
+          {selAgent&&(
+            <div style={{padding:'10px 16px',background:'var(--surface)',borderTop:'1px solid var(--border)'}}>
+              <div style={{display:'flex',gap:8}}>
+                <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}}} placeholder={`Ask ${selAgent.name} specialist…`} style={{flex:1}}/>
+                <button className="btn-primary" disabled={loading||!input.trim()} onClick={()=>sendMsg()} style={{flexShrink:0,padding:'8px 18px'}}>Send</button>
+              </div>
+              <div style={{fontSize:10,color:'var(--text-3)',marginTop:6,textAlign:'center'}}>⚕ Not a substitute for professional medical advice. Always consult your doctor.</div>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+/* ── ADMIN PORTAL ─────────────────────────────── */
+function AdminPortal({patients,sec,setSec,logout}){
+  const NAV=[{id:'overview',icon:'📊',l:'Overview'},{id:'patients',icon:'👥',l:'Patients'},{id:'conversations',icon:'💬',l:'Conversations'},{id:'subscriptions',icon:'💳',l:'Subscriptions'},{id:'feedback',icon:'⭐',l:'Feedback'},{id:'agents',icon:'🤖',l:'Agent Performance'},{id:'health',icon:'🔧',l:'System Health'}];
+  const allConvs=patients.flatMap(p=>p.conversations.map(c=>({...c,pn:p.name})));
+  const allFb=patients.flatMap(p=>p.feedback.map(f=>({...f,pn:p.name})));
+  const totalMsgs=allConvs.reduce((s,c)=>s+c.msgs,0);
+  const avgRating=allFb.length?(allFb.reduce((s,f)=>s+f.rating,0)/allFb.length):0;
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'100vh',background:'var(--bg)'}}>
+      <NavBar right={<button className="btn-ghost" style={{fontSize:12,padding:'6px 12px'}} onClick={logout}>Sign out</button>}/>
+      <div style={{display:'flex',flex:1,overflow:'hidden'}}>
+        <aside style={{width:188,background:'var(--surface)',borderRight:'1px solid var(--border)',padding:8,flexShrink:0,overflowY:'auto'}}>
+          {NAV.map(n=>(
+            <button key={n.id} onClick={()=>setSec(n.id)} style={{width:'100%',textAlign:'left',padding:'7px 10px',borderRadius:8,border:'none',background:sec===n.id?'#EFF6FF':'transparent',color:sec===n.id?'#2563EB':'var(--text-2)',fontWeight:sec===n.id?600:400,fontSize:12,display:'flex',alignItems:'center',gap:8,cursor:'pointer',marginBottom:2}}>
+              <span style={{fontSize:14}}>{n.icon}</span>{n.l}
+            </button>
+          ))}
+        </aside>
+        <main style={{flex:1,overflowY:'auto',padding:20}}>
+          {sec==='overview'&&<AdminOverview patients={patients} allConvs={allConvs} totalMsgs={totalMsgs} avgRating={avgRating}/>}
+          {sec==='patients'&&<AdminPatients patients={patients}/>}
+          {sec==='conversations'&&<AdminConversations allConvs={allConvs}/>}
+          {sec==='subscriptions'&&<AdminSubscriptions patients={patients}/>}
+          {sec==='feedback'&&<AdminFeedback allFb={allFb} avgRating={avgRating}/>}
+          {sec==='agents'&&<AdminAgents/>}
+          {sec==='health'&&<AdminHealth/>}
+        </main>
+      </div>
+    </div>
+  );
+}
+function AdminOverview({patients,allConvs,totalMsgs,avgRating}){
+  const cards=[{l:'Total Patients',v:patients.length,c:'#2563EB'},{l:'Conversations',v:allConvs.length,c:'#7C3AED'},{l:'Total Messages',v:totalMsgs,c:'#059669'},{l:'Avg Rating',v:avgRating.toFixed(1)+'/5',c:'#D97706'}];
+  return (<div>
+    <h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Platform Overview</h2>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:20}}>
+      {cards.map(m=><div key={m.l} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}><div style={{fontSize:11,color:'var(--text-2)',marginBottom:6}}>{m.l}</div><div style={{fontSize:24,fontWeight:600,color:m.c}}>{m.v}</div></div>)}
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="card">
+        <div style={{fontWeight:600,fontSize:13,marginBottom:12}}>Disease subscriptions</div>
+        {DISEASES.map(d=>{const n=patients.filter(p=>p.diseases.includes(d.code)).length,pct=patients.length?Math.round(n/patients.length*100):0;return(<div key={d.code} style={{marginBottom:10}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:3}}><span style={{color:'var(--text-2)'}}>{d.icon} {d.name}</span><span style={{fontWeight:500,color:d.color}}>{n} ({pct}%)</span></div><div style={{height:4,background:'var(--bg)',borderRadius:2}}><div style={{height:'100%',background:d.color,borderRadius:2,width:pct+'%'}}/></div></div>);})}
+      </div>
+      <div className="card">
+        <div style={{fontWeight:600,fontSize:13,marginBottom:12}}>Subscription breakdown</div>
+        {TIERS.map(t=>{const n=patients.filter(p=>p.subscription===t.id).length;return(<div key={t.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)'}}><div style={{fontSize:12,display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:'50%',background:t.color}}/>{t.name} (${t.price}/mo)</div><div style={{fontWeight:600,color:t.color}}>{n}</div></div>);})}
+      </div>
+    </div>
+  </div>);
+}
+function AdminPatients({patients}){
+  return(<div><h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Patient Management ({patients.length})</h2>
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,overflow:'auto'}}>
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <thead><tr style={{background:'var(--bg)'}}>
+          {['Name','Email','Plan','Diseases','Convs','Joined','Last Active'].map(h=><th key={h} style={{padding:'10px 14px',textAlign:'left',fontWeight:500,color:'var(--text-2)',fontSize:11}}>{h}</th>)}
+        </tr></thead>
+        <tbody>{patients.map(p=><tr key={p.id} style={{borderTop:'1px solid var(--border)'}}>
+          <td style={{padding:'10px 14px',fontWeight:500}}>{p.name}</td>
+          <td style={{padding:'10px 14px',color:'var(--text-2)'}}>{p.email}</td>
+          <td style={{padding:'10px 14px'}}><TierBadge tier={p.subscription}/></td>
+          <td style={{padding:'10px 14px'}}><div style={{display:'flex',gap:3,flexWrap:'wrap'}}>{p.diseases.map(d=>{const dis=DISEASES.find(x=>x.code===d);return dis?<span key={d} style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:dis.bg,color:dis.color,fontWeight:500}}>{dis.icon}</span>:null;})}</div></td>
+          <td style={{padding:'10px 14px',textAlign:'center'}}>{p.conversations.length}</td>
+          <td style={{padding:'10px 14px',color:'var(--text-2)'}}>{p.joined}</td>
+          <td style={{padding:'10px 14px',color:'var(--text-2)'}}>{p.lastActive}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </div>);
+}
+function AdminConversations({allConvs}){
+  return(<div><h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>All Conversations ({allConvs.length})</h2>
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,overflow:'auto'}}>
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <thead><tr style={{background:'var(--bg)'}}>{['Patient','Disease','Agent','Messages','Last Message','Date'].map(h=><th key={h} style={{padding:'10px 14px',textAlign:'left',fontWeight:500,color:'var(--text-2)',fontSize:11}}>{h}</th>)}</tr></thead>
+        <tbody>{allConvs.map(c=>{const d=DISEASES.find(x=>x.code===c.disease);return(<tr key={c.id} style={{borderTop:'1px solid var(--border)'}}>
+          <td style={{padding:'10px 14px',fontWeight:500}}>{c.pn}</td>
+          <td style={{padding:'10px 14px'}}>{d?<span>{d.icon} {d.name}</span>:c.disease}</td>
+          <td style={{padding:'10px 14px'}}><span style={{fontFamily:'monospace',fontSize:11,background:'var(--bg)',padding:'2px 6px',borderRadius:4}}>{c.agent}</span></td>
+          <td style={{padding:'10px 14px',textAlign:'center',fontWeight:500}}>{c.msgs}</td>
+          <td style={{padding:'10px 14px',color:'var(--text-2)',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>"{c.lastMsg}"</td>
+          <td style={{padding:'10px 14px',color:'var(--text-2)'}}>{c.date}</td>
+        </tr>);})}
+        </tbody>
+      </table>
+    </div>
+  </div>);
+}
+function AdminSubscriptions({patients}){
+  return(<div><h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Subscriptions & Revenue</h2>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:10,marginBottom:20}}>
+      {TIERS.map(t=>{const n=patients.filter(p=>p.subscription===t.id).length;return(<div key={t.id} className="card" style={{borderTop:`3px solid ${t.color}`}}><div style={{fontWeight:600,fontSize:12,color:t.color,marginBottom:6}}>{t.name}</div><div style={{fontSize:24,fontWeight:600}}>{n}</div><div style={{fontSize:11,color:'var(--text-2)',marginTop:2}}>patients</div><div style={{fontSize:14,fontWeight:600,color:'#059669',marginTop:8}}>${n*t.price}/mo</div></div>);})}
+    </div>
+  </div>);
+}
+function AdminFeedback({allFb,avgRating}){
+  return(<div><h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Patient Feedback</h2>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+      {[{l:'Total Reviews',v:allFb.length},{l:'Average Rating',v:avgRating.toFixed(1)+'/5'},{l:'Satisfaction',v:allFb.length?Math.round(allFb.filter(f=>f.rating>=4).length/allFb.length*100)+'%':'—'}].map(m=><div key={m.l} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px'}}><div style={{fontSize:11,color:'var(--text-2)',marginBottom:4}}>{m.l}</div><div style={{fontSize:20,fontWeight:600}}>{m.v}</div></div>)}
+    </div>
+    {allFb.length===0?<div className="card" style={{textAlign:'center',color:'var(--text-2)',padding:'2rem'}}>No feedback submitted yet.</div>:
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>{allFb.map((f,i)=><div key={i} className="card"><div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div><div style={{fontWeight:500,fontSize:12}}>{f.pn}</div><div style={{fontSize:11,color:'var(--text-2)',marginTop:2}}>{f.agent} · {f.date}</div></div><div style={{fontSize:14}}>{'⭐'.repeat(f.rating)}</div></div>{f.comment&&<div style={{fontSize:12,color:'var(--text-2)',fontStyle:'italic'}}>"{f.comment}"</div>}</div>)}</div>}
+  </div>);
+}
+function AdminAgents(){
+  const rows=DISEASES.flatMap(d=>d.agents.map(a=>({...a,disease:d.name,icon2:a.icon,color:d.color,msgs:Math.floor(Math.random()*120+20),conf:+(0.65+Math.random()*0.3).toFixed(2),esc:Math.floor(Math.random()*15)})));
+  return(<div><h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>Agent Performance</h2>
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,overflow:'auto'}}>
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <thead><tr style={{background:'var(--bg)'}}>{['Agent','Disease','Messages','Confidence','Escalations','Status'].map(h=><th key={h} style={{padding:'10px 14px',textAlign:'left',fontWeight:500,color:'var(--text-2)',fontSize:11}}>{h}</th>)}</tr></thead>
+        <tbody>{rows.map(a=><tr key={a.id} style={{borderTop:'1px solid var(--border)'}}>
+          <td style={{padding:'10px 14px'}}><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:13}}>{a.icon2}</span><div><div style={{fontWeight:500}}>{a.name}</div><div style={{fontFamily:'monospace',fontSize:10,color:'var(--text-3)'}}>{a.id}</div></div></div></td>
+          <td style={{padding:'10px 14px',fontSize:11,color:a.color}}>{a.disease}</td>
+          <td style={{padding:'10px 14px',textAlign:'center',fontWeight:500}}>{a.msgs}</td>
+          <td style={{padding:'10px 14px'}}><div style={{display:'flex',alignItems:'center',gap:6}}><div style={{flex:1,height:4,background:'var(--bg)',borderRadius:2}}><div style={{height:'100%',background:a.conf>0.8?'#059669':a.conf>0.7?'#D97706':'#DC2626',borderRadius:2,width:(a.conf*100)+'%'}}/></div><span style={{fontSize:11,fontFamily:'monospace',fontWeight:500}}>{a.conf}</span></div></td>
+          <td style={{padding:'10px 14px',textAlign:'center',color:a.esc>10?'#DC2626':'var(--text-2)'}}>{a.esc}</td>
+          <td style={{padding:'10px 14px'}}><span style={{fontSize:10,padding:'2px 8px',borderRadius:999,background:'#F0FDF4',color:'#059669',fontWeight:500}}>Active</span></td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </div>);
+}
+function AdminHealth(){
+  const svcs=[{n:'FastAPI Backend',s:'online',ms:12,i:'⚡'},{n:'PostgreSQL',s:'online',ms:3,i:'🗄️'},{n:'ChromaDB',s:'online',ms:8,i:'🔷'},{n:'Redis Cache',s:'online',ms:2,i:'🔴'},{n:'Anthropic LLM',s:'online',ms:450,i:'🤖'},{n:'Embedding Model',s:'online',ms:35,i:'🧮'},{n:'Reranker Model',s:'online',ms:28,i:'🎯'},{n:'Whisper ASR',s:'idle',ms:null,i:'🎤'},{n:'PubMed Crawler',s:'idle',ms:null,i:'🔍'}];
+  return(<div><h2 style={{fontSize:16,fontWeight:600,marginBottom:16}}>System Health</h2>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:10}}>
+      {svcs.map(s=><div key={s.n} className="card" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:16}}>{s.i}</span><div><div style={{fontSize:12,fontWeight:500}}>{s.n}</div>{s.ms&&<div style={{fontSize:11,color:'var(--text-2)'}}>{s.ms}ms</div>}</div></div><div style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:7,height:7,borderRadius:'50%',background:s.s==='online'?'#059669':'#D97706'}}/><span style={{fontSize:11,color:s.s==='online'?'#059669':'#D97706',fontWeight:500}}>{s.s}</span></div></div>)}
+    </div>
+  </div>);
+}
+
+/* ── SHARED ───────────────────────────────────── */
+function NavBar({user,right}){
+  return(<nav style={{background:'var(--surface)',borderBottom:'1px solid var(--border)',padding:'0 20px',height:52,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+    <div style={{display:'flex',alignItems:'center',gap:10}}>
+      <div style={{width:30,height:30,borderRadius:8,background:'#2563EB',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}}>P</div>
+      <span style={{fontWeight:600,fontSize:14}}>PRISM</span>
+      {user&&<><div style={{width:1,height:16,background:'var(--border)',marginLeft:4}}/><span style={{fontSize:12,color:'var(--text-2)'}}>{user.name}</span>{user.subscription&&<TierBadge tier={user.subscription}/>}</>}
+    </div>
+    {right&&<div style={{display:'flex',gap:8,alignItems:'center'}}>{right}</div>}
+  </nav>);
+}
+function Field({label,type='text',value,onChange,placeholder}){
+  return(<div style={{marginBottom:12}}>
+    <label style={{fontSize:11,fontWeight:500,color:'var(--text-2)',display:'block',marginBottom:4}}>{label}</label>
+    <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById('app')).render(<App/>);
+</script>
+</body>
+</html>

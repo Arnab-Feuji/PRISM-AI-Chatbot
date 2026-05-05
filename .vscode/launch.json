@@ -1,0 +1,48 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "PRISM Backend (FastAPI)",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "cwd": "${workspaceFolder}/backend",
+      "env": { "PYTHONPATH": "${workspaceFolder}/backend" },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "PRISM Setup DB",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/setup_db.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "PRISM Crawl (DM1 PubMed)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/crawl.py",
+      "args": ["--agent", "DM1", "--source", "pubmed", "--max", "5", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "PRISM Full Launch",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/run.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "PRISM (Backend + Frontend)",
+      "configurations": ["PRISM Backend (FastAPI)"],
+      "preLaunchTask": "npm: dev - frontend"
+    }
+  ]
+}

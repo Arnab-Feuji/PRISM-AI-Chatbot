@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: #060810; color: #DDE3F5; font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-thumb { background: #2A3055; border-radius: 2px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  .card { @apply bg-bg2 border border-line rounded-2xl; }
+  .btn-primary { @apply bg-gradient-to-r from-gold to-ora text-void font-bold rounded-xl px-5 py-2.5 text-sm font-disp transition-all hover:shadow-lg hover:shadow-gold/20 hover:-translate-y-0.5 active:translate-y-0; }
+  .btn-ghost { @apply bg-bg3 border border-line2 text-ink2 rounded-xl px-4 py-2 text-sm font-medium transition-all hover:bg-bg4 hover:text-ink; }
+  .input { @apply bg-bg3 border border-line2 rounded-xl px-4 py-2.5 text-ink text-sm outline-none transition-all focus:border-gold focus:ring-2 focus:ring-gold/10 placeholder:text-ink3; }
+  .badge { @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-semibold; }
+}
+
+.animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.noise { background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"); }

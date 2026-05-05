@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PRISM — Agent & Database Reference Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --void: #04060F;
+  --bg1: #080B18;
+  --bg2: #0E1220;
+  --bg3: #141828;
+  --bg4: #1A2030;
+  --line: #1E2438;
+  --line2: #252D45;
+  --ink: #E2E8F8;
+  --ink2: #8896BE;
+  --ink3: #434D70;
+  --ca: #A78BFA; --ca-bg: rgba(167,139,250,0.08);
+  --dm: #60A5FA; --dm-bg: rgba(96,165,250,0.08);
+  --cv: #F472B6; --cv-bg: rgba(244,114,182,0.08);
+  --mh: #34D399; --mh-bg: rgba(52,211,153,0.08);
+  --rs: #F5C842; --rs-bg: rgba(245,200,66,0.08);
+  --gold: #F5C842;
+  --teal: #2DD4BF;
+  --red: #F05252;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--void);color:var(--ink);font-family:'Space Grotesk',sans-serif;min-height:100vh;line-height:1.6}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:2px}
+
+/* ── HEADER ── */
+.site-header {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(4,6,15,0.96); backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--line2);
+  padding: 0 2.5rem;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 64px;
+}
+.logo { display:flex; align-items:center; gap: 14px }
+.logo-mark {
+  width: 38px; height: 38px; border-radius: 10px;
+  background: linear-gradient(135deg, #F5C842, #F3752D);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Fraunces', serif; font-weight: 700; color: #04060F; font-size: 18px;
+  box-shadow: 0 0 20px rgba(245,200,66,0.3);
+}
+.logo-text { font-family: 'Fraunces', serif; font-size: 1.3rem; font-weight: 700; }
+.logo-sub { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--ink3); margin-top: 1px; }
+.nav-pills { display: flex; gap: 4px }
+.nav-pill {
+  padding: 6px 14px; border-radius: 999px; font-size: 0.75rem; font-weight: 500;
+  cursor: pointer; border: 1px solid var(--line2); background: none;
+  color: var(--ink2); transition: all 0.2s;
+}
+.nav-pill:hover, .nav-pill.active { color: var(--gold); border-color: rgba(245,200,66,0.3); background: rgba(245,200,66,0.05); }
+
+/* ── HERO ── */
+.hero {
+  padding: 5rem 2.5rem 3rem;
+  text-align: center;
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(245,200,66,0.06) 0%, transparent 70%);
+  position: relative; overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 40px 40px; pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(245,200,66,0.1); border: 1px solid rgba(245,200,66,0.25);
+  border-radius: 999px; padding: 6px 16px; font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace; color: var(--gold); margin-bottom: 1.5rem;
+}
+.hero-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); animation: pulse 2s infinite; }
+.hero h1 { font-family: 'Fraunces', serif; font-size: clamp(2.5rem, 6vw, 4.5rem); line-height: 1.1; margin-bottom: 1rem; }
+.hero h1 em { font-style: italic; color: var(--gold); }
+.hero p { font-size: 1.05rem; color: var(--ink2); max-width: 620px; margin: 0 auto 2.5rem; }
+.hero-stats { display: flex; gap: 2rem; justify-content: center; flex-wrap: wrap; }
+.stat { text-align: center; }
+.stat-val { font-family: 'Fraunces', serif; font-size: 2.5rem; color: var(--gold); line-height: 1; }
+.stat-lab { font-size: 0.72rem; color: var(--ink3); font-family: 'JetBrains Mono', monospace; margin-top: 4px; }
+
+/* ── SECTION ── */
+.section { padding: 4rem 2.5rem; max-width: 1440px; margin: 0 auto; }
+.section-title { font-family: 'Fraunces', serif; font-size: 1.8rem; margin-bottom: 0.4rem; }
+.section-sub { color: var(--ink2); font-size: 0.9rem; margin-bottom: 2.5rem; }
+
+/* ── DISEASE TAB BAR ── */
+.disease-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 2rem; }
+.disease-tab {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 18px; border-radius: 12px;
+  border: 1px solid var(--line2); background: none;
+  font-family: 'Space Grotesk', sans-serif; font-size: 0.82rem;
+  cursor: pointer; transition: all 0.2s; color: var(--ink2);
+}
+.disease-tab:hover { border-color: var(--line); color: var(--ink); }
+.disease-tab.active { font-weight: 600; }
+.disease-tab .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ── AGENT GRID ── */
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 16px; }
+
+.agent-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg1);
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  position: relative;
+}
+.agent-card:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,0,0,0.4); }
+.agent-card-top {
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.agent-card-top::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  border-radius: 16px 16px 0 0;
+}
+.agent-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 0.75rem; }
+.agent-icon {
+  width: 42px; height: 42px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; flex-shrink: 0;
+}
+.agent-id-block {}
+.agent-id { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; }
+.agent-name { font-size: 0.92rem; font-weight: 600; line-height: 1.3; margin-top: 2px; }
+.agent-tagline { font-size: 0.8rem; color: var(--ink2); font-style: italic; }
+.agent-specialty {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.68rem; font-family: 'JetBrains Mono', monospace;
+  padding: 3px 8px; border-radius: 6px;
+  background: var(--bg3); border: 1px solid var(--line2); color: var(--ink2);
+  margin-bottom: 0.75rem;
+}
+.agent-description { font-size: 0.8rem; color: var(--ink2); line-height: 1.55; }
+
+.agent-card-body { padding: 1rem 1.5rem 1.25rem; }
+
+.label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.63rem; color: var(--ink3);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.db-block {
+  background: var(--bg3); border: 1px solid var(--line2);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;
+}
+.db-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem; font-weight: 600; margin-bottom: 4px;
+}
+.db-desc { font-size: 0.77rem; color: var(--ink2); line-height: 1.4; }
+
+.keywords-wrap { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+.keyword {
+  font-size: 0.68rem; font-family: 'JetBrains Mono', monospace;
+  padding: 3px 8px; border-radius: 6px;
+  background: var(--bg4); border: 1px solid var(--line2); color: var(--ink2);
+}
+
+.questions-list { list-style: none; }
+.questions-list li {
+  font-size: 0.79rem; color: var(--ink2); padding: 5px 0;
+  border-bottom: 1px solid var(--line); display: flex; gap: 8px;
+}
+.questions-list li:last-child { border-bottom: none; }
+.questions-list li::before {
+  content: counter(q);
+  counter-increment: q;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem; min-width: 16px; padding-top: 1px;
+}
+
+.q-list-outer { counter-reset: q; }
+
+.guardrail-list { list-style: none; margin-bottom: 10px; }
+.guardrail-list li {
+  font-size: 0.77rem; color: var(--ink2); padding: 4px 0;
+  display: flex; gap: 8px; align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+}
+.guardrail-list li:last-child { border-bottom: none; }
+.guardrail-list li::before { content: '⛨'; font-size: 0.6rem; margin-top: 2px; }
+
+.routing-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.routing-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem; padding: 4px 10px; border-radius: 8px;
+  border: 1px solid; display: flex; align-items: center; gap: 5px;
+}
+
+.section-toggle { cursor: pointer; }
+.toggle-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; background: none; border: none;
+  font-family: 'JetBrains Mono', monospace; font-size: 0.67rem;
+  color: var(--ink3); cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--line); margin-bottom: 8px;
+}
+.toggle-icon { font-size: 0.8rem; transition: transform 0.2s; }
+.toggle-icon.open { transform: rotate(180deg); }
+.collapsible { overflow: hidden; transition: max-height 0.3s ease; }
+
+/* ── DATABASE TABLE ── */
+.db-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.db-table th {
+  text-align: left; padding: 10px 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 0.67rem;
+  color: var(--ink3); text-transform: uppercase; letter-spacing: 0.08em;
+  background: var(--bg2); border-bottom: 1px solid var(--line2);
+}
+.db-table td { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.db-table tr:hover td { background: var(--bg2); }
+.db-table tr:last-child td { border-bottom: none; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 6px;
+  font-size: 0.67rem; font-family: 'JetBrains Mono', monospace; font-weight: 600;
+}
+
+/* ── UTILS ── */
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.hidden { display: none; }
+.divider { height: 1px; background: var(--line); margin: 0 2.5rem; }
+
+/* ── FOOTER ── */
+footer {
+  border-top: 1px solid var(--line);
+  padding: 2rem 2.5rem; text-align: center;
+  color: var(--ink3); font-size: 0.78rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 768px) {
+  .agent-grid { grid-template-columns: 1fr; }
+  .hero { padding: 3rem 1.5rem 2rem; }
+  .section { padding: 2.5rem 1.5rem; }
+  .site-header { padding: 0 1.5rem; }
+  .nav-pills { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site-header">
+  <div class="logo">
+    <div class="logo-mark">P</div>
+    <div>
+      <div class="logo-text">PRISM</div>
+      <div class="logo-sub">Agent &amp; Database Reference</div>
+    </div>
+  </div>
+  <nav class="nav-pills">
+    <button class="nav-pill active" onclick="scrollToSection('agents')">Agents</button>
+    <button class="nav-pill" onclick="scrollToSection('databases')">Databases</button>
+    <button class="nav-pill" onclick="scrollToSection('routing')">Routing</button>
+  </nav>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">PRISM v2.0 · Feuji AI/ML Data Science Team · 2025</div>
+  <h1>25 Specialised AI Agents<br/>for <em>5 Disease Domains</em></h1>
+  <p>Complete reference for all agents, their mutually exclusive ChromaDB vector stores, guardrails, crawl keywords, and suggested questions.</p>
+  <div class="hero-stats">
+    <div class="stat"><div class="stat-val">25</div><div class="stat-lab">Primary Agents</div></div>
+    <div class="stat"><div class="stat-val">25</div><div class="stat-lab">Exclusive Databases</div></div>
+    <div class="stat"><div class="stat-val">5</div><div class="stat-lab">Disease Domains</div></div>
+    <div class="stat"><div class="stat-val">75</div><div class="stat-lab">Total Agent Tiers</div></div>
+    <div class="stat"><div class="stat-val">125</div><div class="stat-lab">Suggested Questions</div></div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- AGENT CARDS SECTION -->
+<section class="section" id="agents">
+  <div class="section-title">Agent Registry</div>
+  <div class="section-sub">Select a disease domain to filter agents. Click any section header to expand/collapse details.</div>
+
+  <!-- Disease tab bar -->
+  <div class="disease-tabs" id="diseaseTabs">
+    <button class="disease-tab active" onclick="filterDomain('ALL')" data-domain="ALL">
+      <div class="dot" style="background:#F5C842"></div> All Domains
+    </button>
+    <button class="disease-tab" onclick="filterDomain('CA')" data-domain="CA">
+      <div class="dot" style="background:#A78BFA"></div> 🎗 Cancer Care
+    </button>
+    <button class="disease-tab" onclick="filterDomain('DM')" data-domain="DM">
+      <div class="dot" style="background:#60A5FA"></div> 🩺 Diabetes
+    </button>
+    <button class="disease-tab" onclick="filterDomain('CV')" data-domain="CV">
+      <div class="dot" style="background:#F472B6"></div> ❤️ Cardiovascular
+    </button>
+    <button class="disease-tab" onclick="filterDomain('MH')" data-domain="MH">
+      <div class="dot" style="background:#34D399"></div> 🧠 Mental Health
+    </button>
+    <button class="disease-tab" onclick="filterDomain('RS')" data-domain="RS">
+      <div class="dot" style="background:#F5C842"></div> 🫁 Respiratory
+    </button>
+  </div>
+
+  <div class="agent-grid" id="agentGrid"></div>
+</section>
+
+<div class="divider"></div>
+
+<!-- DATABASE TABLE SECTION -->
+<section class="section" id="databases">
+  <div class="section-title">Mutually Exclusive Databases</div>
+  <div class="section-sub">Each ChromaDB collection is dedicated exclusively to one agent group. No document is shared between collections.</div>
+  <div style="overflow-x:auto; border-radius:14px; border:1px solid var(--line);">
+  <table class="db-table">
+    <thead>
+      <tr>
+        <th>#</th><th>Agent ID</th><th>Agent Name</th><th>Disease</th>
+        <th>ChromaDB Collection</th><th>Primary Sources</th>
+      </tr>
+    </thead>
+    <tbody id="dbTableBody"></tbody>
+  </table>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ROUTING DIAGRAM SECTION -->
+<section class="section" id="routing">
+  <div class="section-title">Agent Routing Logic</div>
+  <div class="section-sub">LangGraph orchestration flow for every patient conversation.</div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:2rem;">
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:1.25rem;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--gold);margin-bottom:8px;">PRIMARY AGENT FLOW</div>
+      <div style="font-size:0.82rem;color:var(--ink2);line-height:1.8;">
+        1. Detect language (EN/HI/TE/ES/PA)<br/>
+        2. Translate → English<br/>
+        3. Retrieve from agent's exclusive DB<br/>
+        4. Primary agent responds<br/>
+        5. Score confidence + frustration<br/>
+        6. Format + translate response
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--line);border-left:3px solid #A78BFA;border-radius:14px;padding:1.25rem;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#A78BFA;margin-bottom:8px;">SPECIALIST ESCALATION</div>
+      <div style="font-size:0.82rem;color:var(--ink2);line-height:1.8;">
+        Triggered when:<br/>
+        Confidence score &lt; 0.70<br/><br/>
+        Agent: {CA1→CA1-S} {DM1→DM1-S}<br/>
+        {CV1→CV1-S} {MH1→MH1-S} {RS1→RS1-S}<br/><br/>
+        Temperature: 0.10 (more precise)
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--line);border-left:3px solid #34D399;border-radius:14px;padding:1.25rem;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#34D399;margin-bottom:8px;">HUMAN ESCALATION</div>
+      <div style="font-size:0.82rem;color:var(--ink2);line-height:1.8;">
+        Triggered when:<br/>
+        Frustration score &gt; 75<br/><br/>
+        Agent: {CA1→CA1-H} {DM1→DM1-H}<br/>
+        {CV1→CV1-H} {MH1→MH1-H} {RS1→RS1-H}<br/><br/>
+        Temperature: 0.50 (more empathetic)
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--line);border-left:3px solid #F05252;border-radius:14px;padding:1.25rem;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#F05252;margin-bottom:8px;">HARD GUARDRAIL OVERRIDES</div>
+      <div style="font-size:0.82rem;color:var(--ink2);line-height:1.8;">
+        CV2: Any chest pain → 911 first<br/>
+        MH5: Suicidal ideation → crisis line<br/>
+        DM1: DKA signs → ER immediately<br/>
+        RS1: Severe attack → 911 + CPR<br/>
+        CA2: Febrile neutropenia → ER
+      </div>
+    </div>
+  </div>
+
+  <!-- LangGraph ASCII flow -->
+  <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:1.5rem;overflow-x:auto;">
+    <pre style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--ink2);line-height:1.8;">
+  START
+    │
+    ▼
+  ┌─────────────────────┐
+  │   detect_language    │  EN / HI / TE / ES / PA
+  └──────────┬──────────┘
+             │
+             ▼
+  ┌─────────────────────┐
+  │  translate_to_en     │  Google Translate API
+  └──────────┬──────────┘
+             │
+             ▼
+  ┌─────────────────────┐
+  │   retrieve_context   │  RAG: exclusive ChromaDB collection
+  └──────────┬──────────┘     Top-10 retrieve → rerank → Top-5
+             │
+             ▼
+  ┌─────────────────────┐
+  │ guardrail_precheck   │  Hard rules (emergency detection)
+  └──────────┬──────────┘
+             │ override?
+      ┌──────┴──────┐
+      │ YES         │ NO
+      │             ▼
+      │  ┌─────────────────────┐
+      │  │   primary_agent     │  CA1/DM1/CV1/MH1/RS1...
+      │  └──────────┬──────────┘
+      │             │
+      │             ▼
+      │  ┌─────────────────────┐
+      │  │  score_confidence   │  Heuristic: keyword overlap + TF-IDF
+      │  └──────────┬──────────┘
+      │             │
+      │    ┌────────┴──────────┐
+      │    │confidence         │frustration
+      │    │< 0.70             │> 75
+      │    ▼                   ▼
+      │  ┌──────────┐  ┌──────────────┐
+      │  │specialist│  │human_escalate│
+      │  │  agent   │  │   agent      │
+      │  └────┬─────┘  └──────┬───────┘
+      │       └───────┬────────┘
+      │               │
+      └───────────────┤
+                      ▼
+           ┌─────────────────────┐
+           │   format_response   │  Citations + Evidence Grade
+           └──────────┬──────────┘
+                      │
+                      ▼
+           ┌─────────────────────┐
+           │  translate_response  │  Back to patient language
+           └──────────┬──────────┘
+                      │
+                      ▼
+                    END
+                    │
+                    ├── PostgreSQL: save messages + RAGAS metrics
+                    └── ChromaDB: agent collection confirmed
+    </pre>
+  </div>
+</section>
+
+<footer>
+  PRISM — Patient-centric Retrieval Intelligence System for Medicine · v2.0<br/>
+  Feuji AI/ML Data Science Team · 25 Agents · 25 Databases · 5 Disease Domains<br/>
+  This is a reference document. Not a substitute for professional medical advice.
+</footer>
+
+<script>
+// ── Agent data ─────────────────────────────────────────────────────────────
+const AGENTS = [
+  { id:"CA1", name:"Cancer Screening & Early Detection", domain:"CA", domainName:"Cancer Care",
+    color:"#A78BFA", icon:"🔬", badge:"Screening",
+    specialty:"Oncology Screening & Population Health",
+    tagline:"Catch cancer before it starts — evidence-based screening guidance",
+    description:"Guides patients through evidence-based cancer screening for breast, cervical, colorectal, lung, and prostate cancers. Interprets screening results, advises on hereditary risk. LATAM-aware: PAHO, INCA, INCAN, VIA protocols.",
+    db:"prism_ca_01_screening", temp:"0.2",
+    dbDesc:"ACS, USPSTF, NCCN, PAHO VIA screening, mammography, colonoscopy, PSA, HPV, LDCT, BRCA pre-test counselling.",
+    specialist:"CA1-S", human:"CA1-H",
+    guardrails:["NEVER diagnose cancer","ALWAYS provide evidence grade A/B/C","BRCA-positive → certified genetic counsellor","Abnormal results (BI-RADS 4/5) → urgent referral","LATAM: free care alternatives (IMSS, SUS, EPS)"],
+    keywords:["cancer screening guidelines 2024","mammography ACS USPSTF","colonoscopy FIT screening","cervical cancer HPV PAHO","BRCA hereditary breast","LDCT lung screening"],
+    questions:["At what age should I start getting mammograms?","My PSA is 5.2 — does that mean prostate cancer?","HPV test vs Pap smear — what's the difference?","I'm 52 and never had a colonoscopy — too late?","My mother had breast cancer — should I get BRCA tested?"],
+    sources:["ACS 2024","USPSTF Grade A/B","NCCN","PAHO/WHO","INCA Brazil","INCAN Mexico"]
+  },
+  { id:"CA2", name:"Cancer Treatment Navigation", domain:"CA", domainName:"Cancer Care",
+    color:"#A78BFA", icon:"💊", badge:"Treatment",
+    specialty:"Medical Oncology & Treatment Planning",
+    tagline:"Navigate your treatment journey with evidence-graded clarity",
+    description:"Navigates chemotherapy, immunotherapy, targeted therapy, radiation, and surgery. Explains HER2, EGFR, PD-L1, BRCA-driven treatment selection, clinical trial eligibility, and NCCN pathways.",
+    db:"prism_ca_02_treatment", temp:"0.2",
+    dbDesc:"NCCN/ASCO/ESMO guidelines, FOLFOX, FOLFIRI, R-CHOP, trastuzumab, osimertinib, pembrolizumab, CAR-T, bispecifics.",
+    specialist:"CA2-S", human:"CA2-H",
+    guardrails:["NEVER recommend specific drug doses","Febrile neutropenia → ER immediately","irAE Grade 3-4 → stop immunotherapy + steroids","Never discourage evidence-based treatment","LATAM: check INVIMA/ANVISA/COFEPRIS access"],
+    keywords:["NCCN breast cancer treatment 2024","EGFR NSCLC osimertinib FLAURA","immunotherapy pembrolizumab PD-L1","HER2 trastuzumab","FOLFOX colorectal","CAR-T myeloma"],
+    questions:["I have HER2-positive breast cancer — how does trastuzumab work?","Neoadjuvant vs adjuvant chemotherapy?","FOLFOX side effects to prepare for?","What is a PD-L1 test?","Supplements during chemotherapy?"],
+    sources:["NCCN","ASCO","ESMO","NEJM Oncology","JCO","Lancet Oncology"]
+  },
+  { id:"CA3", name:"Cancer Supportive Care & Symptom Mgmt", domain:"CA", domainName:"Cancer Care",
+    color:"#A78BFA", icon:"🌿", badge:"Supportive",
+    specialty:"Palliative Medicine & Supportive Oncology",
+    tagline:"Quality of life matters as much as treatment",
+    description:"Manages cancer-related symptoms: antiemetics, WHO pain ladder, nutritional support, fatigue management, lymphedema, mucositis, and palliative/hospice transitions.",
+    db:"prism_ca_03_supportive", temp:"0.25",
+    dbDesc:"NCCN supportive care, MASCC antiemetic protocol, WHO analgesic ladder, palliative care, cachexia, lymphedema, hospice criteria.",
+    specialist:"CA3-S", human:"CA3-H",
+    guardrails:["Pain ≥ 8/10 → oncology team immediately","Never frame palliative care as 'giving up'","Opioid dose → always defer to prescriber","Hospice: patient's choice always"],
+    keywords:["NCCN supportive care guidelines","MASCC antiemetic protocol","cancer pain WHO ladder","palliative care ASCO","fatigue cancer treatment"],
+    questions:["How do I manage nausea during chemotherapy?","What can I eat with no appetite during cancer?","How do I deal with cancer-related fatigue?","What is palliative care?","Managing mouth sores from chemo?"],
+    sources:["NCCN Supportive Care","MASCC","ASCO Palliative Care","WHO Pain Ladder","JPSM"]
+  },
+  { id:"CA4", name:"Cancer Survivorship & Follow-Up", domain:"CA", domainName:"Cancer Care",
+    color:"#A78BFA", icon:"🌟", badge:"Survivorship",
+    specialty:"Cancer Survivorship & Rehabilitation Oncology",
+    tagline:"Life after cancer — thriving beyond treatment",
+    description:"Post-treatment surveillance, late effects, cardiac toxicity, cognitive impairment (chemo brain), lymphedema, fertility, sexual health, and return-to-work planning.",
+    db:"prism_ca_04_survivorship", temp:"0.25",
+    dbDesc:"ASCO survivorship care plans, late effects by cancer type, anthracycline cardiac surveillance, chemo brain, lymphedema, fertility, sexual health.",
+    specialist:"CA4-S", human:"CA4-H",
+    guardrails:["Fear of recurrence: validate — never dismiss","New symptoms: immediate oncology referral","Cardiac surveillance after anthracyclines: echo follow-up","Chemo brain: validate and provide evidence-based strategies"],
+    keywords:["ASCO survivorship care plan 2024","cancer late effects surveillance","anthracycline cardiac toxicity","chemo brain cognitive impairment","cancer survivorship sexual health"],
+    questions:["How often do I need follow-up scans?","Long-term chemo side effects to watch for?","Managing lymphedema after breast surgery?","What is chemo brain?","When can I return to work?"],
+    sources:["ASCO Survivorship","ACS Survivorship","NCCN","Journal of Cancer Survivorship","Lancet Oncology"]
+  },
+  { id:"CA5", name:"Hereditary Cancer Genetics", domain:"CA", domainName:"Cancer Care",
+    color:"#A78BFA", icon:"🧬", badge:"Genetics",
+    specialty:"Cancer Genetics & Hereditary Risk Counselling",
+    tagline:"Know your genetic risk — protect yourself and your family",
+    description:"Pre/post-genetic counselling for BRCA1/2, Lynch syndrome, PALB2, CHEK2. VUS interpretation, chemoprevention evidence, prophylactic surgery guidance, family cascade testing.",
+    db:"prism_ca_05_genetics", temp:"0.15",
+    dbDesc:"BRCA1/2 pathogenicity, Lynch Amsterdam II criteria, NCCN genetic criteria, PALB2/CHEK2/ATM, VUS interpretation, tamoxifen/raloxifene, prophylactic surgery.",
+    specialist:"CA5-S", human:"CA5-H",
+    guardrails:["NEVER interpret specific genetic test result — genetic counsellor required","VUS: explain uncertainty clearly; never alarm","BRCA+: present all options without coercion","Never pressure on family disclosure"],
+    keywords:["BRCA hereditary breast ovarian cancer","Lynch syndrome Amsterdam II","NCCN genetic testing criteria","VUS variant uncertain significance","prophylactic mastectomy BRCA evidence"],
+    questions:["Should I get BRCA genetic testing?","My mother had ovarian cancer — am I at risk?","What is Lynch syndrome?","Options if I test BRCA1 positive?","Should my children be tested?"],
+    sources:["NCCN Genetic Guidelines","ACMG","FORCE","Journal Genetic Counseling","Genetics in Medicine"]
+  },
+  { id:"DM1", name:"Glucose Monitoring & Diagnostics", domain:"DM", domainName:"Diabetes",
+    color:"#60A5FA", icon:"📊", badge:"Monitoring",
+    specialty:"Diabetes Diagnostics, CGM & Glucose Management",
+    tagline:"Master your glucose — real-time insights for better diabetes control",
+    description:"Blood glucose interpretation, CGM/Time-in-Range guidance, HbA1c targets, DKA recognition, hypoglycaemia management (15-15 rule), MODY/LADA differentiation.",
+    db:"prism_dm_01_monitoring", temp:"0.2",
+    dbDesc:"ADA Standards 2024, CGM guidelines, TIR targets (ISPAD), HbA1c, DKA/HHS, 15-15 rule, dawn phenomenon vs Somogyi, MODY/LADA.",
+    specialist:"DM1-S", human:"DM1-H",
+    guardrails:["DKA (glucose >250 + vomiting + fruity breath) → ER IMMEDIATELY","Glucose <54 mg/dL → call emergency","NEVER suggest insulin doses","LATAM: free insulin access information"],
+    keywords:["ADA Standards Diabetes 2024","CGM Time in Range ISPAD","HbA1c targets individualised","DKA management","hypoglycemia 15-15 rule","dawn phenomenon Somogyi"],
+    questions:["Fasting blood sugar 210 mg/dL — dangerous?","What HbA1c target for 58-year-old?","CGM showed 58 mg/dL at 2am — what is 15-15 rule?","What is Time in Range?","Dawn phenomenon vs Somogyi?"],
+    sources:["ADA Standards 2024","ISPAD Consensus","ALAD","Diabetes Care","Diabetologia"]
+  },
+  { id:"DM2", name:"Diabetes Medication & Insulin Mgmt", domain:"DM", domainName:"Diabetes",
+    color:"#60A5FA", icon:"💉", badge:"Medication",
+    specialty:"Diabetes Pharmacotherapy & Insulin Regimens",
+    tagline:"The right medication, the right way",
+    description:"Metformin, GLP-1 agonists, SGLT-2 inhibitors, DPP-4 inhibitors, and insulin regimens. EMPA-REG, CREDENCE, SURPASS trial evidence. Cardio-renal protection mechanisms.",
+    db:"prism_dm_02_medication", temp:"0.2",
+    dbDesc:"ADA/EASD 2024 algorithm, GLP-1 (semaglutide, liraglutide), SGLT-2 (EMPA-REG, CREDENCE, DAPA-HF), tirzepatide (SURPASS), metformin CKD dosing.",
+    specialist:"DM2-S", human:"DM2-H",
+    guardrails:["NEVER recommend insulin doses","Metformin contraindicated at eGFR <30","SGLT-2 sick-day rules: hold during vomiting","euDKA risk with SGLT-2 — educate on ketones"],
+    keywords:["ADA EASD diabetes treatment algorithm 2024","semaglutide GLP-1 SUSTAIN STEP","SGLT-2 EMPA-REG","CREDENCE dapagliflozin","tirzepatide SURPASS","metformin CKD eGFR"],
+    questions:["Metformin causing diarrhoea — what can I do?","Semaglutide vs liraglutide?","Do SGLT-2s protect heart and kidneys?","What is basal-bolus insulin?","Metformin + SGLT-2 together?"],
+    sources:["ADA/EASD Consensus 2024","EMPA-REG OUTCOME","CREDENCE Trial","SURPASS-5","LEADER Trial","Diabetes Care"]
+  },
+  { id:"DM3", name:"Diabetes Nutrition, Lifestyle & Weight", domain:"DM", domainName:"Diabetes",
+    color:"#60A5FA", icon:"🥗", badge:"Nutrition",
+    specialty:"Medical Nutrition Therapy & Diabetes Lifestyle",
+    tagline:"Food is medicine — personalised nutrition for optimal glucose control",
+    description:"Evidence-based medical nutrition therapy, carb counting, glycaemic index, exercise prescriptions. Culturally competent for LATAM diets (beans, tortillas, rice, plantain).",
+    db:"prism_dm_03_nutrition", temp:"0.25",
+    dbDesc:"ADA MNT 2024, DIRECT trial, Mediterranean (PREDIMED), glycaemic index tables, carb counting, LATAM foods (frijoles, tortillas, quinoa), exercise and glucose.",
+    specialist:"DM3-S", human:"DM3-H",
+    guardrails:["Never prescribe specific calorie targets — refer to dietitian","Eating disorder history → never restrict calories","Never demonise cultural foods","Bariatric surgery → multidisciplinary team"],
+    keywords:["ADA medical nutrition therapy 2024","low carb diet type 2 diabetes","Mediterranean PREDIMED","glycemic index diabetes","DIRECT trial dietary remission","exercise prescription diabetes"],
+    questions:["Foods to avoid with type 2 diabetes?","Can I eat rice and tortillas?","How much exercise to lower blood sugar?","What is glycaemic index?","How to count carbohydrates for insulin?"],
+    sources:["ADA MNT Guidelines 2024","DIRECT Trial","PREDIMED","Diabetes Care Nutrition","ALAD"]
+  },
+  { id:"DM4", name:"Diabetes Complications Prevention", domain:"DM", domainName:"Diabetes",
+    color:"#60A5FA", icon:"⚠️", badge:"Complications",
+    specialty:"Diabetes Complications & Microvascular Disease",
+    tagline:"Prevent complications, protect every organ",
+    description:"Diabetic nephropathy (CKD, SGLT-2, ACE/ARB), retinopathy screening, neuropathy management (duloxetine, pregabalin), foot care (Wagner classification), peripheral arterial disease.",
+    db:"prism_dm_04_complications", temp:"0.2",
+    dbDesc:"ADA microvascular standards, KDIGO DKD, retinopathy (ETDRS), neuropathy (MNSI), painful neuropathy treatment, diabetic foot (Wagner), Charcot, PAD.",
+    specialist:"DM4-S", human:"DM4-H",
+    guardrails:["Diabetic foot ulcer → urgent podiatry within 24 hours","Proliferative retinopathy → urgent ophthalmology same week","eGFR <30 → nephrologist referral","Charcot foot → immediate offloading; do not weight-bear"],
+    keywords:["diabetic nephropathy KDIGO","diabetic retinopathy ETDRS","diabetic neuropathy duloxetine pregabalin","diabetic foot Wagner","SGLT-2 DKD","Charcot neuroarthropathy"],
+    questions:["Numbness in feet — diabetic neuropathy?","eGFR declining — related to diabetes?","How to prevent diabetic foot ulcers?","Protein in urine?","How often for eye checks?"],
+    sources:["ADA Microvascular Standards 2024","KDIGO DKD","ETDRS","IWGDF","Diabetologia"]
+  },
+  { id:"DM5", name:"Gestational Diabetes & Special Populations", domain:"DM", domainName:"Diabetes",
+    color:"#60A5FA", icon:"🤱", badge:"Gestational",
+    specialty:"Gestational, Paediatric & Geriatric Diabetes",
+    tagline:"Diabetes at every life stage — specialised care",
+    description:"GDM (ADA/ACOG), type 1 in children (ISPAD), elderly patients with frailty, insulin in pregnancy, GDM postpartum T2D risk, closed-loop pump paediatrics.",
+    db:"prism_dm_05_gestational", temp:"0.2",
+    dbDesc:"ADA/ACOG GDM, ISPAD paediatric T1D, HAPO study, insulin in pregnancy, geriatric diabetes (frailty targets), closed-loop paediatrics, paediatric DKA.",
+    specialist:"DM5-S", human:"DM5-H",
+    guardrails:["GDM: never suggest insulin dose — obstetric diabetes team","Paediatric DKA → ER immediately","Pregnancy + diabetes: ALL meds cleared by OB team","Postpartum: 6-8 week OGTT — always recommend"],
+    keywords:["gestational diabetes ADA ACOG 2024","GDM HAPO threshold","ISPAD type 1 children","insulin pregnancy safety","geriatric diabetes frailty","closed loop paediatric"],
+    questions:["Gestational diabetes — what does it mean for my baby?","Blood sugar targets during pregnancy?","Child diagnosed type 1 — how to manage school?","Diabetes at age 75 — different targets?","Can GDM come back next pregnancy?"],
+    sources:["ADA Standards Pregnancy 2024","ACOG GDM Bulletin","ISPAD","HAPO Study","Diabetes Care"]
+  },
+  { id:"CV1", name:"Cardiovascular Clinical Assessment", domain:"CV", domainName:"Cardiovascular",
+    color:"#F472B6", icon:"❤️", badge:"Clinical",
+    specialty:"Clinical Cardiology & Preventive Cardiology",
+    tagline:"Understand your heart — evidence-based cardiovascular assessment",
+    description:"Hypertension management, dyslipidaemia, heart failure (HFrEF/HFpEF), atrial fibrillation anticoagulation (CHA₂DS₂-VASc), CAD risk stratification.",
+    db:"prism_cv_01_clinical", temp:"0.2",
+    dbDesc:"ACC/AHA 2022 HTN, AHA/ACC HF guidelines, AF CHA₂DS₂-VASc, ASCVD risk, EMPEROR-Reduced, DAPA-HF, PARADIGM-HF.",
+    specialist:"CV1-S", human:"CV1-H",
+    guardrails:["Acute chest pain or syncope → IMMEDIATE ER","AF with HR >150 → urgent cardiology","HTN urgency (>180/120) → same-day assessment","eGFR <30 + DOAC: dose adjust or contraindicate"],
+    keywords:["ACC AHA hypertension 2022","heart failure HFrEF HFpEF 2022","atrial fibrillation CHA2DS2-VASc","EMPEROR-Reduced","DAPA-HF","ASCVD risk calculator"],
+    questions:["BP 148/92 — do I have hypertension?","LDL 168 after heart attack — need a statin?","SGLT-2 for non-diabetic heart failure — why?","Difference between HFrEF and HFpEF?","AF — do I need a blood thinner?"],
+    sources:["ACC/AHA HF 2022","ACC/AHA HTN 2022","ESC 2021","EMPEROR-Reduced","DAPA-HF","PARADIGM-HF"]
+  },
+  { id:"CV2", name:"Cardiac Emergency & Critical Care", domain:"CV", domainName:"Cardiovascular",
+    color:"#F05252", icon:"🚨", badge:"Emergency",
+    specialty:"Cardiac Emergency Medicine & Critical Care",
+    tagline:"Every second counts — immediate cardiac emergency guidance",
+    description:"HIGHEST PRIORITY agent. Immediate life-safety guidance for STEMI, stroke (FAST), cardiac arrest (CPR/AED), hypertensive emergency, massive PE, cardiogenic shock.",
+    db:"prism_cv_02_emergency", temp:"0.1",
+    dbDesc:"AHA BLS/ACLS 2023, STEMI (door-to-balloon), tPA/thrombectomy stroke windows, Wells PE score, hypertensive emergency vs urgency, cardiac arrest algorithm, AED.",
+    specialist:"CV2-S", human:"CV2-H",
+    guardrails:["RULE #1: 911 FIRST — before any other response for emergency symptoms","NEVER delay emergency services for history","Stroke: NO aspirin if haemorrhagic possible — CT first","Always provide regional emergency numbers"],
+    keywords:["STEMI PCI door balloon ACC AHA 2023","stroke tPA 4.5 hour","CPR hands only AHA 2023","Wells PE score CT-PA","hypertensive emergency end organ","cardiac arrest ACLS"],
+    questions:["Father has severe chest pain — what to do NOW?","FAST stroke signs and treatment window?","Someone collapsed — I don't know CPR — what do I do?","Hypertensive emergency vs urgency?","D-dimer 1.8 after long flight — blood clot?"],
+    sources:["AHA BLS/ACLS 2023","ACC/AHA STEMI","AHA/ASA Stroke 2019","ESC PE 2019","AHA HTN Crises"]
+  },
+  { id:"CV3", name:"Cardiovascular Medications", domain:"CV", domainName:"Cardiovascular",
+    color:"#F472B6", icon:"💊", badge:"Medications",
+    specialty:"Cardiovascular Pharmacology & Drug Safety",
+    tagline:"Know your heart medications — safer, smarter pharmacotherapy",
+    description:"ACEi/ARB/ARNI/beta-blockers/MRA/diuretics/statins/anticoagulants (warfarin, DOACs)/antiplatelets. Drug interactions, NSAID/supplement cautions in cardiac patients.",
+    db:"prism_cv_03_medications", temp:"0.2",
+    dbDesc:"ACEi/ARB side effects, ARNI (PARADIGM-HF), beta-blocker HFrEF (COPERNICUS, MERIT-HF), MRA (RALES, EMPHASIS-HF), warfarin INR, DOAC comparison, statin intensity, NSAID in HF.",
+    specialist:"CV3-S", human:"CV3-H",
+    guardrails:["NSAID + HF → always contraindicate; suggest paracetamol","ACEi + ARB combo → contraindicated","ARNI: 36-hour washout from ACEi — angioedema risk","Potassium-sparing + ACEi + CKD → hyperkalaemia risk"],
+    keywords:["ACE inhibitor ARB heart failure","ARNI PARADIGM-HF","beta-blocker COPERNICUS MERIT-HF","MRA RALES EMPHASIS-HF","warfarin INR diet","DOAC comparison","NSAID contraindication HF"],
+    questions:["Lisinopril giving me dry cough — what do I do?","Why beta-blocker if heart already weak?","What is sacubitril/valsartan?","Ibuprofen safe with heart failure meds?","Which foods affect my warfarin the most?"],
+    sources:["PARADIGM-HF","COPERNICUS","RALES","EMPHASIS-HF","ACC/AHA HF Pharmacotherapy","ESC HF 2021"]
+  },
+  { id:"CV4", name:"Cardiac Rehabilitation & Exercise", domain:"CV", domainName:"Cardiovascular",
+    color:"#F472B6", icon:"🏃", badge:"Rehab",
+    specialty:"Cardiac Rehabilitation & Exercise Physiology",
+    tagline:"Movement heals the heart — structured exercise for cardiac recovery",
+    description:"Phase II cardiac rehab, Karvonen heart rate targets, post-CABG/MI exercise progression, resistance training safety, home-based alternatives for LATAM patients.",
+    db:"prism_cv_04_rehabilitation", temp:"0.25",
+    dbDesc:"HF-ACTION trial, Cochrane cardiac rehab, Phase I/II/III structure, Karvonen HRR, Borg RPE, post-CABG sternal precautions, home-based rehab equivalence, LVAD exercise.",
+    specialist:"CV4-S", human:"CV4-H",
+    guardrails:["Post-CABG: no lifting >2.25kg (5lbs) for 8 weeks","HF exercise: stop if BP <80 or >200/110","New arrhythmia during exercise → stop, seek care","LVAD: never exercise without specialist clearance"],
+    keywords:["cardiac rehabilitation phase 2","HF-ACTION exercise heart failure","home cardiac rehab Cochrane","post CABG sternal precautions","Karvonen heart rate reserve","resistance training cardiac surgery"],
+    questions:["What does cardiac rehab involve?","Target heart rate zone with heart failure?","Resistance training safe after bypass?","No rehab centre nearby in rural Argentina?","How does exercise help weak heart?"],
+    sources:["HF-ACTION Trial","Cochrane Cardiac Rehab 2015","ACC/AHA Rehab","AACVPR","ESC HF Rehab"]
+  },
+  { id:"CV5", name:"Cardiac Nutrition, Prevention & Lifestyle", domain:"CV", domainName:"Cardiovascular",
+    color:"#F472B6", icon:"🥗", badge:"Nutrition",
+    specialty:"Cardiovascular Nutrition & Preventive Cardiology",
+    tagline:"Your fork is a cardiac drug — evidence-based heart nutrition",
+    description:"DASH diet, Mediterranean (PREDIMED), triglyceride management, omega-3 evidence (REDUCE-IT), sodium restriction, and LATAM-adapted heart-healthy eating.",
+    db:"prism_cv_05_nutrition", temp:"0.25",
+    dbDesc:"DASH diet (SBP −8-14 mmHg), PREDIMED Mediterranean, REDUCE-IT EPA 4g/day, triglyceride management, sodium restriction, familial hypercholesterolaemia diet, LATAM foods.",
+    specialist:"CV5-S", human:"CV5-H",
+    guardrails:["Triglycerides >1000 → pancreatitis risk; urgent medical review","FH: diet alone insufficient — lipid-lowering therapy essential","Never eliminate staple cultural foods without substitution","HF: alcohol none; non-HF: max 1-2 units/day"],
+    keywords:["DASH diet blood pressure","PREDIMED Mediterranean cardiovascular","REDUCE-IT icosapentaenoic acid","triglycerides diet fibrate","sodium hypertension prevention","heart healthy LATAM diet"],
+    questions:["What is the DASH diet?","Triglycerides 480 mg/dL — what to cut first?","Do omega-3 supplements really help the heart?","Mediterranean diet realistic in Brazil?","LATAM traditional heart-healthy foods?"],
+    sources:["PREDIMED","REDUCE-IT","DASH Diet (Appel NEJM)","ACC/AHA Prevention 2019","ESC Prevention 2021"]
+  },
+  { id:"MH1", name:"Depression Assessment & Support", domain:"MH", domainName:"Mental Health",
+    color:"#34D399", icon:"🧠", badge:"Depression",
+    specialty:"Mood Disorders & Evidence-Based Psychiatry",
+    tagline:"Depression is treatable — evidence-based support, one step at a time",
+    description:"PHQ-9-based depression assessment, SSRI/SNRI psychoeducation, CBT vs pharmacotherapy evidence, lifestyle antidepressants, LATAM-cultural idioms of distress.",
+    db:"prism_mh_01_depression", temp:"0.3",
+    dbDesc:"APA Practice Guidelines, NICE CG90, PHQ-9 validation, SSRI/SNRI comparison, CBT efficacy, exercise as antidepressant, LATAM depression epidemiology, cultural idioms.",
+    specialist:"MH1-S", human:"MH1-H",
+    guardrails:["MANDATORY: Screen for suicidal ideation every interaction","ANY suicidal ideation → escalate to MH5 immediately","Never diagnose depression","Never recommend specific antidepressants/doses","Abrupt SSRI discontinuation: warn about discontinuation syndrome"],
+    keywords:["major depression APA guidelines 2024","PHQ-9 validation screening","SSRI SNRI antidepressant comparison","CBT depression evidence","exercise antidepressant NICE","LATAM depression cultural"],
+    questions:["Depression vs just sadness — how do I know?","SSRIs vs SNRIs — what's the difference?","How long do antidepressants take to work?","Can depression be treated without medication?","I scored 15 on PHQ-9 — what does that mean?"],
+    sources:["APA Guidelines Depression 2024","NICE CG90","Lancet Psychiatry","JAMA Psychiatry","World Psychiatry"]
+  },
+  { id:"MH2", name:"Anxiety Disorders & Management", domain:"MH", domainName:"Mental Health",
+    color:"#34D399", icon:"💚", badge:"Anxiety",
+    specialty:"Anxiety Disorders & Cognitive Behavioural Therapy",
+    tagline:"Anxiety is manageable — evidence-based paths to calm",
+    description:"GAD-7 anxiety assessment, CBT/exposure therapy, SSRI/SNRI/buspirone evidence, distinguishing panic from cardiac events, benzodiazepine safety guidance.",
+    db:"prism_mh_02_anxiety", temp:"0.3",
+    dbDesc:"NICE CG113 (GAD), NICE CG159 (social anxiety), GAD-7, panic disorder CBT, SSRIs in GAD, benzodiazepine dependence risk, MBCT, 4-7-8 breathing, OCD (NICE CG31).",
+    specialist:"MH2-S", human:"MH2-H",
+    guardrails:["First panic attack → cardiac rule-out first","Benzodiazepines: max 2-4 weeks — never long-term endorse","OCD: ERP is first-line — not GAD approaches","Never endorse avoidance as anxiety coping strategy"],
+    keywords:["GAD treatment NICE CG113","panic disorder CBT","GAD-7 validation","social anxiety SSRI CBT","benzodiazepine dependence","breathing techniques anxiety","OCD ERP treatment"],
+    questions:["How do I know if I have an anxiety disorder?","Panic attack vs heart attack — difference?","Can breathing exercises help anxiety?","What medications are used for anxiety?","How does CBT work for anxiety?"],
+    sources:["NICE CG113","NICE CG159","NICE CG31","Lancet Psychiatry","JAMA Mindfulness"]
+  },
+  { id:"MH3", name:"Sleep, Wellness & Burnout Recovery", domain:"MH", domainName:"Mental Health",
+    color:"#34D399", icon:"🌙", badge:"Sleep",
+    specialty:"Sleep Medicine, Wellness & Occupational Mental Health",
+    tagline:"Sleep is medicine — restore your brain with sleep science",
+    description:"CBT-I for insomnia, sleep hygiene, melatonin meta-analysis evidence, chronobiology, burnout assessment (Maslach), MBSR, non-pharmacological first approach.",
+    db:"prism_mh_03_sleep", temp:"0.3",
+    dbDesc:"AASM CBT-I guideline, NICE CG159, melatonin meta-analysis (Buscemi), chronotype, Maslach Burnout Inventory, MBSR, ISI, sleep restriction therapy, Z-drug dependence.",
+    specialist:"MH3-S", human:"MH3-H",
+    guardrails:["Z-drugs: never long-term — dependence + driving impairment","Insomnia + suicidal ideation → MH5 immediately","Alcohol as sleep aid: always discourage","Sleep apnea suspected → refer to RS5"],
+    keywords:["CBT-I insomnia evidence","sleep hygiene guidelines","melatonin meta-analysis","Maslach Burnout Inventory","MBSR mindfulness","insomnia severity index ISI","zolpidem dependence"],
+    questions:["Fix insomnia without sleeping pills?","What is CBT-I?","Does melatonin actually work?","How does poor sleep affect mental health?","Best evidence-based sleep hygiene routine?"],
+    sources:["AASM CBT-I Guideline","NICE CG159","Buscemi Melatonin Meta-analysis","Kabat-Zinn MBSR","Maslach Burnout Research"]
+  },
+  { id:"MH4", name:"Trauma, PTSD & Trauma-Informed Care", domain:"MH", domainName:"Mental Health",
+    color:"#34D399", icon:"🛡️", badge:"Trauma",
+    specialty:"Trauma Psychiatry & PTSD",
+    tagline:"Healing from trauma is possible — evidence-based, trauma-informed",
+    description:"PCL-5 PTSD screening, EMDR, Prolonged Exposure, CPT. Domestic violence safety planning, ACEs, complex PTSD (ICD-11), LATAM political trauma.",
+    db:"prism_mh_04_trauma", temp:"0.3",
+    dbDesc:"APA/ISTSS PTSD guidelines, PCL-5 validation, EMDR (Shapiro), Prolonged Exposure (Foa), CPT (Resick), ACEs study, complex PTSD ICD-11, DV safety planning, LATAM trauma.",
+    specialist:"MH4-S", human:"MH4-H",
+    guardrails:["DV: ALWAYS provide safety plan + DV hotline first","Never push trauma processing without professional support","Active suicidal ideation + PTSD → MH5 immediately","Complex PTSD: stabilisation before trauma processing"],
+    keywords:["PTSD EMDR prolonged exposure CPT evidence","PCL-5 PTSD validation","APA ISTSS PTSD guidelines 2024","complex PTSD ICD-11","DV safety planning","ACEs health outcomes","LATAM political violence trauma"],
+    questions:["What are the symptoms of PTSD?","How is PTSD treated — what is EMDR?","I experienced domestic violence — how do I get help?","What are ACEs?","How to deal with flashbacks?"],
+    sources:["APA PTSD Guidelines 2017","ISTSS Guidelines","NICE CG26","Shapiro EMDR","Foa Prolonged Exposure"]
+  },
+  { id:"MH5", name:"Mental Health Crisis & Suicide Prevention", domain:"MH", domainName:"Mental Health",
+    color:"#F05252", icon:"🆘", badge:"Crisis",
+    specialty:"Crisis Psychiatry & Suicide Prevention",
+    tagline:"You are not alone — immediate crisis support, always here",
+    description:"CRITICAL SAFETY AGENT. Suicidal ideation, self-harm, acute psychiatric emergency support. Zero Suicide Framework. Crisis line resources. Safety planning. Human escalation always.",
+    db:"prism_mh_05_crisis", temp:"0.2",
+    dbDesc:"Zero Suicide Framework, C-SSRS, safety planning (Stanley & Brown), 988 Lifeline, means restriction, LATAM crisis lines (CVV 188 Brazil, CVIVD Mexico), psychiatric emergency criteria.",
+    specialist:"MH5-S", human:"MH5-H",
+    guardrails:["RULE #1: Crisis line at the START of any crisis response","RULE #2: Never minimise suicidal ideation","RULE #3: Always escalate to MH5-H coordinator","RULE #4: Never provide method information","Active plan with means → 911 immediately"],
+    keywords:["suicide prevention zero suicide framework","C-SSRS Columbia Suicide Severity Rating","safety planning Stanley Brown","988 crisis line effectiveness","means restriction suicide","LATAM crisis line CVV Brazil","psychiatric emergency involuntary"],
+    questions:["I'm having thoughts of harming myself — what do I do?","How to help a friend wanting to die?","Warning signs someone may be suicidal?","I feel like I can't go on — who can I talk to?","What is a safety plan?"],
+    sources:["Zero Suicide Framework","C-SSRS","Stanley & Brown Safety Planning","988 Lifeline","IASP","WHO Mental Health"]
+  },
+  { id:"RS1", name:"Asthma Management & Inhaler Therapy", domain:"RS", domainName:"Respiratory",
+    color:"#F5C842", icon:"🫁", badge:"Asthma",
+    specialty:"Asthma & Airway Disease Management",
+    tagline:"Breathe freely — precision asthma control with GINA evidence",
+    description:"GINA 2024 step therapy: SABA/ICS/LABA/LAMA, inhaler technique, trigger avoidance, peak flow monitoring, action plans, severe asthma biologics eligibility.",
+    db:"prism_rs_01_asthma", temp:"0.2",
+    dbDesc:"GINA 2024, MDI/DPI/BAI inhaler techniques, SABA (salbutamol), ICS/LABA (Symbicort, Seretide), biologics (omalizumab, mepolizumab, dupilumab), asthma action plans, exercise-induced bronchoconstriction.",
+    specialist:"RS1-S", human:"RS1-H",
+    guardrails:["Acute severe: SABA ineffective + SpO2 <92% → ER immediately","Oral corticosteroids: short courses only; never long-term suggest","Beta-blockers contraindicated in asthma — always flag","NSAID/aspirin sensitivity (Samter's): always ask","Biologics: referral to specialist centre only"],
+    keywords:["GINA asthma guidelines 2024","inhaler technique MDI DPI spacer","asthma biologics omalizumab dupilumab","ICS formoterol MART strategy","asthma triggers avoidance","severe asthma step 4 5","exercise induced bronchoconstriction"],
+    questions:["How do I use my rescue inhaler correctly?","Rescue vs preventer inhaler — difference?","Asthma worse at night — why?","What triggers to avoid?","When to go to ER for asthma attack?"],
+    sources:["GINA 2024","Lancet Asthma","NAEPP EPR","ERJ","PAHO Respiratory"]
+  },
+  { id:"RS2", name:"COPD Management & Spirometry", domain:"RS", domainName:"Respiratory",
+    color:"#F5C842", icon:"🌬️", badge:"COPD",
+    specialty:"COPD & Obstructive Lung Disease",
+    tagline:"Live better with COPD — GOLD-standard evidence for every breath",
+    description:"GOLD 2024: spirometry interpretation, GOLD A/B/E groups, LAMA/LABA/ICS selection, exacerbation prevention (roflumilast, macrolide prophylaxis), oxygen criteria, smoking cessation.",
+    db:"prism_rs_02_copd", temp:"0.2",
+    dbDesc:"GOLD 2024, FEV1/FVC spirometry, GOLD A/B/E groups, LAMA (tiotropium), triple therapy (IMPACT trial), roflumilast, azithromycin prophylaxis, LTOT criteria, varenicline NRT, alpha-1 antitrypsin.",
+    specialist:"RS2-S", human:"RS2-H",
+    guardrails:["AECOP with SpO2 <88% → ER immediately","High-flow O2 in COPD: hypercapnic failure risk — always mention","Alpha-1 antitrypsin: young/non-smoker COPD → specialist","Roflumilast: depression contraindication — screen first","Azithromycin: QTc risk — ECG required"],
+    keywords:["GOLD COPD guidelines 2024","COPD spirometry FEV1 FVC","LAMA tiotropium COPD","COPD triple therapy IMPACT","roflumilast COPD exacerbation","LTOT oxygen criteria","smoking cessation varenicline","alpha-1 antitrypsin"],
+    questions:["COPD staging and FEV1?","Best inhaler for COPD?","Home oxygen therapy — should I use it?","How to prevent exacerbations?","How to quit smoking with COPD?"],
+    sources:["GOLD 2024","IMPACT Trial","Cochrane Smoking Cessation","ATS/ERS Spirometry","ERJ"]
+  },
+  { id:"RS3", name:"Pulmonary Rehabilitation & Breathing Therapy", domain:"RS", domainName:"Respiratory",
+    color:"#F5C842", icon:"💨", badge:"Rehab",
+    specialty:"Pulmonary Rehabilitation & Respiratory Physiotherapy",
+    tagline:"Every breath better — evidence-based pulmonary rehabilitation",
+    description:"ATS/ERS PR Statement: exercise tolerance, 6MWT, Borg dyspnoea, pursed-lip breathing, diaphragmatic breathing, ACBT, oscillatory PEP, home PR equivalence.",
+    db:"prism_rs_03_rehabilitation", temp:"0.25",
+    dbDesc:"ATS/ERS PR Statement 2023, 6MWT, Borg scale, PLB evidence, diaphragmatic breathing, ACBT, Flutter/Acapella, home PR Cochrane equivalence, tele-rehabilitation.",
+    specialist:"RS3-S", human:"RS3-H",
+    guardrails:["SpO2 <85% during exercise → stop immediately","Borg >8/10 → stop and rest; seek care if persistent","Acute exacerbation → never exercise; wait for stabilisation","Post-exacerbation: 4 weeks before starting PR"],
+    keywords:["pulmonary rehabilitation ATS ERS 2023","6-minute walk test COPD","pursed lip breathing evidence","diaphragmatic breathing COPD","home pulmonary rehab Cochrane","ACBT airway clearance","tele-rehabilitation respiratory"],
+    questions:["Breathing exercises for COPD?","What is pulmonary rehabilitation?","How to improve breathing capacity?","What is pursed-lip breathing?","Can exercise help my lungs?"],
+    sources:["ATS/ERS PR Statement 2023","Cochrane Home PR","ERJ Breathing","Breathe ERS Journal","Thorax Airway Clearance"]
+  },
+  { id:"RS4", name:"Respiratory Medications & Inhaler Devices", domain:"RS", domainName:"Respiratory",
+    color:"#F5C842", icon:"💊", badge:"Medications",
+    specialty:"Respiratory Pharmacology & Inhaler Device Optimisation",
+    tagline:"The right device, the right technique — maximise every breath",
+    description:"MDI/DPI/SMI/nebuliser device selection, spacer evidence, ICS side effects, LABA/LAMA/triple therapy, montelukast (FDA black box), theophylline, mucolytics.",
+    db:"prism_rs_04_medications", temp:"0.2",
+    dbDesc:"MDI/DPI/BAI/SMI comparison, spacer deposition evidence, ICS candidiasis/dysphonia, LABA (salmeterol, formoterol), LAMA, triple (Trelegy, Trimbow), montelukast FDA warning, theophylline TDM, NAC mucolytic, azithromycin QTc.",
+    specialist:"RS4-S", human:"RS4-H",
+    guardrails:["ICS: always instruct to rinse mouth post-inhalation","Montelukast: FDA black box — inform all patients","LABA without ICS in asthma: contraindicated","Theophylline: narrow window; drug/smoking interactions","Azithromycin: QTc — check drug combinations"],
+    keywords:["MDI DPI SMI inhaler comparison","spacer inhaler deposition","ICS oral candidiasis dysphonia","montelukast asthma FDA black box","theophylline TDM interactions","N-acetylcysteine mucolytic","triple inhaler IMPACT","azithromycin QTc COPD"],
+    questions:["How to use spacer with inhaler?","Side effects of inhaled steroids?","Nebuliser or inhaler — which is better?","What is montelukast for?","Can I take azithromycin long-term for COPD?"],
+    sources:["GINA Inhaler 2024","GOLD COPD Inhaler 2024","Cochrane Spacer vs Nebuliser","FDA Montelukast 2020","ERJ Drug Evidence"]
+  },
+  { id:"RS5", name:"Sleep-Disordered Breathing & OSA", domain:"RS", domainName:"Respiratory",
+    color:"#F5C842", icon:"🌙", badge:"Sleep Apnea",
+    specialty:"Sleep-Disordered Breathing & Respiratory Sleep Medicine",
+    tagline:"Breathe through the night — evidence-based sleep apnoea care",
+    description:"OSA assessment (Epworth, STOP-BANG), polysomnography/HSAT, AHI staging, CPAP/APAP/BiPAP therapy, mandibular advancement, hypoglossal nerve stimulation, cardiovascular consequences.",
+    db:"prism_rs_05_sleep_apnea", temp:"0.2",
+    dbDesc:"AASM OSA guidelines, AHI staging (mild 5-14, moderate 15-29, severe ≥30), Epworth, STOP-BANG, CPAP adherence, APAP vs fixed, BiPAP OHS/CSA, mandibular device, Inspire, OHS, SAVE/RICCADSA trials.",
+    specialist:"RS5-S", human:"RS5-H",
+    guardrails:["Severe OSA + commercial driver → immediately advise physician report","OHS with hypercapnia: BiPAP — never fixed CPAP without specialist","Central apnea: specialist input required","CPAP pressure: never adjust without sleep team","Driving risk: uncontrolled severe OSA → advise cessation"],
+    keywords:["OSA AASM clinical guidelines","CPAP adherence outcomes","AHI classification mild moderate severe","mandibular advancement OSA","Epworth STOP-BANG screening","obesity hypoventilation BiPAP","hypoglossal nerve stimulation Inspire","OSA cardiovascular SAVE trial"],
+    questions:["How do I know if I have sleep apnoea?","What is CPAP and how does it work?","Partner says I stop breathing at night?","Does sleep apnoea affect my heart?","Alternatives to CPAP?"],
+    sources:["AASM OSA Guidelines","SAVE Trial","RICCADSA Trial","Lancet Respiratory Medicine","ERJ Sleep"]
+  },
+];
+
+const DOMAIN_COLORS = { CA:"#A78BFA", DM:"#60A5FA", CV:"#F472B6", MH:"#34D399", RS:"#F5C842" };
+
+function buildAgentCard(a) {
+  const c = DOMAIN_COLORS[a.domain];
+  const cvClass = a.id === 'CV2' || a.id === 'MH5' ? 'var(--red)' : c;
+
+  return `
+<div class="agent-card" data-domain="${a.domain}" style="border-color:${c}18;">
+  <div class="agent-card-top" style="border-color:${c}20;">
+    <div class="agent-card-top" style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,${c}80,transparent);border-radius:16px 16px 0 0;"></div>
+    <div class="agent-header">
+      <div class="agent-icon" style="background:${c}18;border:1px solid ${c}30;">
+        ${a.icon}
+      </div>
+      <div class="agent-id-block">
+        <div class="agent-id" style="color:${c}">${a.id}</div>
+        <div class="agent-name">${a.name}</div>
+      </div>
+    </div>
+    <div class="agent-specialty">⚕ ${a.specialty}</div>
+    <div class="agent-tagline">"${a.tagline}"</div>
+    <div style="margin-top:10px" class="agent-description">${a.description}</div>
+  </div>
+
+  <div class="agent-card-body">
+    <!-- DB -->
+    <div class="label">Mutually Exclusive ChromaDB Collection</div>
+    <div class="db-block">
+      <div class="db-name" style="color:${c}">${a.db}</div>
+      <div class="db-desc">${a.dbDesc}</div>
+    </div>
+
+    <!-- Routing -->
+    <div class="label">Escalation Routing</div>
+    <div class="routing-pills" style="margin-bottom:14px;">
+      <div class="routing-pill" style="color:${c};border-color:${c}30;background:${c}10;">
+        Primary → ${a.id}
+      </div>
+      <div class="routing-pill" style="color:#A78BFA;border-color:#A78BFA30;background:#A78BFA10;">
+        ↑ Specialist → ${a.specialist}
+      </div>
+      <div class="routing-pill" style="color:#34D399;border-color:#34D39930;background:#34D39910;">
+        ↑ Human → ${a.human}
+      </div>
+      <div class="routing-pill" style="color:var(--ink3);border-color:var(--line);">
+        🌡 ${a.temp}
+      </div>
+    </div>
+
+    <!-- Guardrails toggle -->
+    <div class="section-toggle">
+      <button class="toggle-btn" onclick="toggleSection(this)">
+        <span>Guardrails (${a.guardrails.length})</span>
+        <span class="toggle-icon">▾</span>
+      </button>
+      <div class="collapsible" style="max-height:0;">
+        <ul class="guardrail-list">
+          ${a.guardrails.map(g=>`<li>${g}</li>`).join('')}
+        </ul>
+      </div>
+    </div>
+
+    <!-- Keywords toggle -->
+    <div class="section-toggle">
+      <button class="toggle-btn" onclick="toggleSection(this)">
+        <span>Crawl Keywords (${a.keywords.length})</span>
+        <span class="toggle-icon">▾</span>
+      </button>
+      <div class="collapsible" style="max-height:0;">
+        <div class="keywords-wrap">
+          ${a.keywords.map(k=>`<span class="keyword">${k}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- Questions toggle -->
+    <div class="section-toggle">
+      <button class="toggle-btn" onclick="toggleSection(this)">
+        <span>Top 5 Suggested Questions</span>
+        <span class="toggle-icon">▾</span>
+      </button>
+      <div class="collapsible" style="max-height:0;">
+        <div class="q-list-outer">
+          <ul class="questions-list">
+            ${a.questions.map(q=>`<li>${q}</li>`).join('')}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sources -->
+    <div class="label" style="margin-top:10px;">Evidence Sources</div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;">
+      ${a.sources.map(s=>`<span class="badge" style="background:${c}12;border:1px solid ${c}25;color:${c}CC;font-size:0.65rem;padding:3px 7px;">${s}</span>`).join('')}
+    </div>
+  </div>
+</div>`;
+}
+
+function buildDbRow(a, i) {
+  const c = DOMAIN_COLORS[a.domain];
+  return `
+<tr>
+  <td class="mono" style="color:var(--ink3)">${i+1}</td>
+  <td><span class="badge" style="background:${c}15;border:1px solid ${c}30;color:${c}">${a.id}</span></td>
+  <td style="color:var(--ink2);font-size:0.8rem;">${a.name}</td>
+  <td><span class="badge" style="font-size:0.65rem;background:var(--bg3);border:1px solid var(--line2);color:var(--ink2);">${a.domainName}</span></td>
+  <td><code style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:${c};background:${c}10;padding:3px 8px;border-radius:6px;">${a.db}</code></td>
+  <td style="font-size:0.75rem;color:var(--ink3);">${a.sources.slice(0,2).join(', ')}</td>
+</tr>`;
+}
+
+// Render
+const grid = document.getElementById('agentGrid');
+const tbody = document.getElementById('dbTableBody');
+AGENTS.forEach((a,i) => {
+  grid.innerHTML += buildAgentCard(a);
+  tbody.innerHTML += buildDbRow(a,i);
+});
+
+// Filter
+let currentDomain = 'ALL';
+function filterDomain(domain) {
+  currentDomain = domain;
+  document.querySelectorAll('.disease-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.domain === domain);
+    if (t.dataset.domain === domain) {
+      const c = DOMAIN_COLORS[domain] || '#F5C842';
+      t.style.borderColor = c + '60';
+      t.style.color = c;
+      t.style.background = c + '10';
+    } else {
+      t.style.borderColor = '';
+      t.style.color = '';
+      t.style.background = '';
+    }
+  });
+  document.querySelectorAll('.agent-card').forEach(card => {
+    card.style.display = (domain === 'ALL' || card.dataset.domain === domain) ? '' : 'none';
+  });
+}
+
+// Toggle
+function toggleSection(btn) {
+  const collapsible = btn.nextElementSibling;
+  const icon = btn.querySelector('.toggle-icon');
+  const isOpen = collapsible.style.maxHeight !== '0px' && collapsible.style.maxHeight !== '';
+  if (isOpen) {
+    collapsible.style.maxHeight = '0';
+    icon.classList.remove('open');
+  } else {
+    collapsible.style.maxHeight = collapsible.scrollHeight + 'px';
+    icon.classList.add('open');
+  }
+}
+
+// Nav scroll
+function scrollToSection(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+</script>
+</body>
+</html>

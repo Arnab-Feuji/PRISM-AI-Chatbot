@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: dev - frontend",
+      "type": "npm",
+      "script": "dev",
+      "path": "frontend/",
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": { "owner": "vite", "pattern": { "regexp": "." }, "background": { "activeOnStart": true, "beginsPattern": "VITE", "endsPattern": "ready" } }
+    },
+    {
+      "label": "npm: admin - frontend",
+      "type": "npm",
+      "script": "admin",
+      "path": "frontend/",
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "pip install backend",
+      "type": "shell",
+      "command": "pip install -r requirements.txt --break-system-packages",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": "build"
+    },
+    {
+      "label": "npm install frontend",
+      "type": "shell",
+      "command": "npm install",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "group": "build"
+    },
+    {
+      "label": "Docker: Start Services",
+      "type": "shell",
+      "command": "docker-compose up -d postgres redis chromadb",
+      "group": "build"
+    },
+    {
+      "label": "Setup Database",
+      "type": "shell",
+      "command": "python scripts/setup_db.py",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build"
+    }
+  ]
+}
