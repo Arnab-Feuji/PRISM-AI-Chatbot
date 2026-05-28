@@ -1,0 +1,11 @@
+from fpdf import FPDF
+pdf = FPDF()
+pdf.add_page()
+pdf.set_font("helvetica", size=12)
+pdf.set_font("helvetica", 'B', 16)
+pdf.cell(w=0, h=10, text="PRISM Health - Reference Prescription", align='C', new_x="LMARGIN", new_y="NEXT")
+pdf.ln(10)
+pdf.set_font("helvetica", size=12)
+pdf.multi_cell(w=0, h=8, text="Hello world")
+pdf.output("test.pdf")
+print("PDF generation successful")

@@ -1,0 +1,23 @@
+--- SYSTEM ALERTS ---
+ID: d9f102b9-075d-4238-9b3f-c5e146b16325, Title: Escalation: MH1 → specialist, Msg: {"agent_id": "MH1", "conversation_id": "e7511e13-5b47-4c52-b18c-9d7548b47c2c", "user_id": "e931a801-4bbc-49ce-961a-893a2118c3a0", "type": "specialist", "reason": "", "confidence": 0.175, "frustration": 25, "disease_code": "MH"}
+ID: 26f1bd31-a64a-432f-8520-cc108b30f810, Title: LLM call: MH1-S [specialist], Msg: {"agent_id": "MH1-S", "conversation_id": "e7511e13-5b47-4c52-b18c-9d7548b47c2c", "model": "gpt-4o", "prompt_tokens": 2024, "completion_tokens": 172, "total_tokens": 2196, "processing_ms": 3327, "route": "specialist", "disease_code": "MH"}
+ID: 3bc0b346-5fc7-43c8-b4ea-16f7ba73b775, Title: LLM call: MH1 [specialist], Msg: {"agent_id": "MH1", "conversation_id": "e7511e13-5b47-4c52-b18c-9d7548b47c2c", "model": "gpt-4o", "prompt_tokens": 2013, "completion_tokens": 120, "total_tokens": 2133, "processing_ms": 4671, "route": "specialist", "disease_code": "MH"}
+ID: fd528322-ba8d-4bd3-9b4e-2430857f0416, Title: LLM call: MH1-S [specialist], Msg: {"agent_id": "MH1-S", "conversation_id": "e7511e13-5b47-4c52-b18c-9d7548b47c2c", "model": "gpt-4o", "prompt_tokens": 1406, "completion_tokens": 174, "total_tokens": 1580, "processing_ms": 2786, "route": "specialist", "disease_code": "MH"}
+ID: d46f4627-b4dc-491e-978e-2bfa67d5c3e3, Title: Escalation: MH1 → specialist, Msg: {"agent_id": "MH1", "conversation_id": "e7511e13-5b47-4c52-b18c-9d7548b47c2c", "user_id": "e931a801-4bbc-49ce-961a-893a2118c3a0", "type": "specialist", "reason": "", "confidence": 0.175, "frustration": 0, "disease_code": "MH"}
+ID: bab4d964-36b8-43d7-9498-52107a949f5e, Title: LLM call: MH1 [specialist], Msg: {"agent_id": "MH1", "conversation_id": "e7511e13-5b47-4c52-b18c-9d7548b47c2c", "model": "gpt-4o", "prompt_tokens": 1395, "completion_tokens": 170, "total_tokens": 1565, "processing_ms": 4609, "route": "specialist", "disease_code": "MH"}
+ID: 57b45257-004d-46dc-b89b-8984c95c324d, Title: LLM call: CA1-S [specialist], Msg: {"agent_id": "CA1-S", "conversation_id": "c68b67f5-e1d0-47e0-8bbb-c66de4d21e00", "model": "gpt-4o", "prompt_tokens": 851, "completion_tokens": 77, "total_tokens": 928, "processing_ms": 3649, "route": "specialist", "disease_code": "CA"}
+ID: 254a32e4-400a-4dcb-bced-02eff42e2c03, Title: Escalation: CA1 → specialist, Msg: {"agent_id": "CA1", "conversation_id": "c68b67f5-e1d0-47e0-8bbb-c66de4d21e00", "user_id": "e931a801-4bbc-49ce-961a-893a2118c3a0", "type": "specialist", "reason": "", "confidence": 0.175, "frustration": 0, "disease_code": "CA"}
+ID: cac35d74-c6e8-4766-8002-cff03db73e79, Title: LLM call: CA1 [specialist], Msg: {"agent_id": "CA1", "conversation_id": "c68b67f5-e1d0-47e0-8bbb-c66de4d21e00", "model": "gpt-4o", "prompt_tokens": 841, "completion_tokens": 77, "total_tokens": 918, "processing_ms": 3136, "route": "specialist", "disease_code": "CA"}
+ID: ac05e77b-f055-479e-816d-bda2d7ccb2e1, Title: Escalation: CA1 → specialist, Msg: {"agent_id": "CA1", "conversation_id": "c68b67f5-e1d0-47e0-8bbb-c66de4d21e00", "user_id": "e931a801-4bbc-49ce-961a-893a2118c3a0", "type": "specialist", "reason": "", "confidence": 0.175, "frustration": 0, "disease_code": "CA"}
+
+--- LLM CALL LOGS ---
+ID: 5a0cd45a-bfe9-4c92-9d3e-2a439e562cae, Model: gpt-4o, Prompt: 240, Comp: 148, Success: True
+ID: 8d176344-e026-45f0-85d7-63da612bda7f, Model: gpt-4o, Prompt: 1026, Comp: 167, Success: True
+ID: f3763dcb-6202-4237-a2f8-ac7664fd5d6d, Model: gpt-4o, Prompt: 919, Comp: 144, Success: True
+ID: da68e705-b847-4609-a14f-35af807c025a, Model: gpt-4o, Prompt: 932, Comp: 145, Success: True
+ID: f7f921b6-acfe-40b7-8114-eadae7b5aaf8, Model: gpt-4o, Prompt: 1781, Comp: 161, Success: True
+ID: e57567f7-c2cc-48a0-a568-e10b17d5dc2c, Model: gpt-4o, Prompt: 1770, Comp: 155, Success: True
+ID: 4a08cd3c-1ee0-4215-a7a2-a768c844cc1f, Model: gpt-4o, Prompt: 449, Comp: 148, Success: True
+ID: 1c9d1092-1f11-4000-8b86-5c2b2337cdbf, Model: gpt-4o, Prompt: 460, Comp: 153, Success: True
+ID: d96941e6-92c2-4f62-bdf1-f9dddd9a00d9, Model: gpt-4o, Prompt: 1036, Comp: 77, Success: True
+ID: 9324aa4d-76fd-4780-9750-8e6125a6737a, Model: gpt-4o, Prompt: 1046, Comp: 74, Success: True
