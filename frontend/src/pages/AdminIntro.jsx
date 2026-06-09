@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, ShieldCheck, Layers, MessageSquare, 
   UploadCloud, Brain, Users, Zap, Bell, 
-  Activity, LifeBuoy, CheckCircle, ArrowRight 
+  Activity, LifeBuoy, CheckCircle, ArrowRight, Target
 } from 'lucide-react';
 
 const metrics = [
@@ -78,6 +78,12 @@ const metrics = [
     description: "Advanced metrics evaluating the clinical accuracy and empathy of patient interactions.",
     icon: <CheckCircle className="text-emerald-500" size={24} />,
     color: "from-emerald-500/20 to-transparent"
+  },
+  {
+    title: "Recommendation 360° View",
+    description: "AI-driven action plan synthesizing RAGAS, feedback, alerts, escalations, and quality metrics to boost patient satisfaction.",
+    icon: <Target className="text-[var(--accent)]" size={24} />,
+    color: "from-[var(--accent)]/20 to-transparent"
   }
 ];
 
@@ -118,10 +124,10 @@ export default function AdminIntro() {
                 <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md bg-white/5 flex items-center justify-center mb-1.5 group-hover:scale-105 transition-transform border border-white/5">
                   {React.cloneElement(metric.icon, { size: 16, className: 'text-[var(--accent)]' })}
                 </div>
-                <h3 className="text-[10px] sm:text-[11px] font-black uppercase tracking-wide mb-0.5 group-hover:text-[var(--accent)] transition-colors text-[var(--text-main)] leading-tight">
+                <h3 className="text-xs sm:text-sm font-black uppercase tracking-wide mb-1 group-hover:text-[var(--accent)] transition-colors text-[var(--text-main)] leading-tight">
                   {metric.title}
                 </h3>
-                <p className="text-[var(--text-dim)] text-[9px] sm:text-[10px] leading-snug line-clamp-2 font-medium">
+                <p className="text-[var(--text-dim)] text-[10px] sm:text-xs leading-snug line-clamp-2 font-medium">
                   {metric.description}
                 </p>
               </div>

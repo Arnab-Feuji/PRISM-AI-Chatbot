@@ -114,3 +114,55 @@
 .text-white { color: var(--text-main); }
 .text-gray-400 { color: var(--text-dim); }
 .text-gray-500 { color: var(--text-dim); opacity: 0.7; }
+
+/* Patient chat input — auto-grow, no visible scrollbar (WhatsApp-style) */
+.prism-chat-input {
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.prism-chat-input::-webkit-scrollbar {
+  display: none;
+}
+
+/* Patient chat input bar — unified WhatsApp-style pill */
+.prism-input-shell {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 6px 5px 4px;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  box-sizing: border-box;
+}
+.prism-input-field-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+}
+.prism-send-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+}
+.prism-send-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+  filter: brightness(1.08);
+}
+.prism-send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

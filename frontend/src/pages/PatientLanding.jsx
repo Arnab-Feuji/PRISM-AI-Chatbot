@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Activity, Brain, Globe, Zap, ArrowRight, Settings, Layers, FileDown, History, HeartPulse, Video, MessageSquare, Download, ThumbsUp, FileText } from 'lucide-react';
+import { Shield, Activity, Brain, Globe, Zap, ArrowRight, Layers, FileDown, History, HeartPulse, Video, MessageSquare, Download, ThumbsUp, FileText } from 'lucide-react';
 
 export default function PatientLanding() {
   const navigate = useNavigate();
@@ -33,12 +33,6 @@ export default function PatientLanding() {
           <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center font-bold shadow-lg shadow-[var(--accent)]/20 text-white">P</div>
           <span className="text-xl font-bold tracking-tight">PRISM Patient</span>
         </div>
-        <button 
-          onClick={() => navigate('/login?role=admin')}
-          className="flex items-center gap-2 text-gray-400 hover:text-white text-xs font-bold border border-white/10 px-4 py-2 rounded-full hover:bg-white/5 transition-all"
-        >
-          <Settings size={14} /> Admin Console
-        </button>
       </nav>
 
       {/* Hero */}

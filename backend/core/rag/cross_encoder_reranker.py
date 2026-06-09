@@ -346,7 +346,7 @@ class CrossEncoderReranker:
                 text             = doc,
                 parent_id        = meta.get("parent_id", ""),
                 agent_id         = meta.get("agent_id", ""),
-                source_doc       = meta.get("source_doc", ""),
+                source_doc       = meta.get("source_doc") or meta.get("source") or meta.get("doc_type", ""),
                 section_title    = meta.get("section_title", ""),
                 evidence_grade   = meta.get("evidence_grade") or None,
                 clinical_entities = entities,

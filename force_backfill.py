@@ -45,6 +45,7 @@ async def backfill():
                 tier2_score=report["tier2_score"],
                 quality_standard=report["quality_standard"],
                 reject_reasons=report["reject_reasons"],
+                gap_reasons=report.get("gap_reasons", {}),
                 dim_scores=report["dim_scores"]
             ))
             

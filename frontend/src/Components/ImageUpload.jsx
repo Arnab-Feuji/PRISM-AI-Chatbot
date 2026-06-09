@@ -62,6 +62,7 @@ export default function ImageUpload({
   language     = "en",
   onAnalysisComplete,   // callback(analysisResult) → inserts message into chat
   onGuardrail,          // callback(guardrailResult) → handles redirect
+  compact      = false,
 }) {
   const [phase, setPhase]           = useState(STATES.IDLE);
   const [file, setFile]             = useState(null);
@@ -200,7 +201,7 @@ export default function ImageUpload({
   // ════════════════════════════════════════════════════════════════════════════
 
   return (
-    <div style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+    <div style={{ fontFamily: "system-ui, -apple-system, sans-serif", flexShrink: 0, display: "flex", alignItems: "flex-end" }}>
 
       {/* ── IDLE — Upload trigger button (inline in input bar) ─────────────── */}
       {phase === STATES.IDLE && (
@@ -218,11 +219,14 @@ export default function ImageUpload({
             style={{
               display:        "flex",
               alignItems:     "center",
-              gap:            6,
-              padding:        "7px 12px",
+              justifyContent: compact ? "center" : "flex-start",
+              gap:            compact ? 0 : 6,
+              padding:        compact ? 0 : "7px 12px",
+              width:          compact ? 40 : undefined,
+              height:         compact ? 40 : undefined,
               background:     "transparent",
-              border:         `1px solid ${diseaseColor}44`,
-              borderRadius:   10,
+              border:         compact ? "none" : `1px solid ${diseaseColor}44`,
+              borderRadius:   compact ? "50%" : 10,
               color:          diseaseColor,
               cursor:         "pointer",
               fontSize:       12,
@@ -233,17 +237,18 @@ export default function ImageUpload({
               flexShrink:     0,
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = diseaseColor + "11";
-              e.currentTarget.style.borderColor = diseaseColor;
-              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.background = diseaseColor + (compact ? "18" : "11");
+              if (!compact) e.currentTarget.style.borderColor = diseaseColor;
+              if (!compact) e.currentTarget.style.transform = "translateY(-1px)";
             }}
             onMouseLeave={e => {
               e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = diseaseColor + "44";
-              e.currentTarget.style.transform = "translateY(0)";
+              if (!compact) e.currentTarget.style.borderColor = diseaseColor + "44";
+              if (!compact) e.currentTarget.style.transform = "translateY(0)";
             }}
           >
-            <span style={{ fontSize: 16 }}>📂</span> Upload Medical Document
+            <span style={{ fontSize: compact ? 20 : 16 }}>{compact ? "📎" : "📂"}</span>
+            {!compact && " Upload Medical Document"}
           </button>
           
           {/* Helper Tips */}

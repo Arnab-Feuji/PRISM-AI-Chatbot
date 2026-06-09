@@ -11,6 +11,7 @@ const COUNTRIES = [
   { code: 'CO', label: 'Colombia 🇨🇴' },
   { code: 'CL', label: 'Chile 🇨🇱' },
   { code: 'PE', label: 'Peru 🇵🇪' },
+  { code: 'BO', label: 'Bolivia 🇧🇴' },
   { code: 'UY', label: 'Uruguay 🇺🇾' },
   { code: 'VE', label: 'Venezuela 🇻🇪' },
   { code: 'EC', label: 'Ecuador 🇪🇨' },

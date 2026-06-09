@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  BarChart, Bar, LineChart, Line, RadarChart, Radar, PolarGrid,
+  LineChart, Line, RadarChart, Radar, PolarGrid,
   PolarAngleAxis, ResponsiveContainer, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, PieChart, Pie, Cell,
+  Tooltip, Legend, PieChart, Pie, Cell, BarChart, Bar,
 } from 'recharts'
 import { useDropzone } from 'react-dropzone'
 import {
@@ -11,13 +11,15 @@ import {
   AlertTriangle, Activity, TrendingUp, Upload, Search, Bell,
   CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, LogOut,
   Shield, Zap, Globe, Brain, Server, Layers, Lock, Download, Info, AlertCircle, Heart,
-  BookOpen, X, Scale, Languages, Eye, Accessibility
+  BookOpen, X, Scale, Languages, Eye, Accessibility, Target
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../services/api'
 import { useAuthStore } from '../store/auth'
 import AdminQuality from './AdminQuality'
 import AdminSentiment from './AdminSentiment'
+import AdminRecommendation360 from './AdminRecommendation360'
+import { parseUtcDate, formatDate, formatTime, formatRelativeTime } from '../utils/datetime'
 
 // ── Shared components ──────────────────────────────────────────────────────
 const MetricCard = ({ label, value, sub, color = 'var(--accent)', icon, tip }) => (
@@ -128,6 +130,10 @@ const METRIC_DESCS = {
   sessions: "Count of unique clinical interactions processed through the RAG pipeline in the last 7 days.",
   health: "Real-time pulse monitoring for databases, AI providers, and semantic models.",
   composite: "The global platform quality index averaged across all therapeutic agents and patient groups.",
+  cdc_pubmed: "Full answers grounded on CDC or PubMed documents from the crawled authority corpus (ChromaDB retrieval).",
+  llm_fallbacks: "Full answers where CDC/PubMed evidence was not found — the LLM responded from its own clinical knowledge.",
+  retrieval_total: "Sum of CDC/PubMed retrievals plus LLM fallback full answers. Excludes clarifying questions.",
+  llm_interactions_relation: "LLM Interactions counts all tracked LLM API calls (clarifying questions, primary agent, specialist, etc.). It is usually higher than Retrieval Total because each patient turn may invoke multiple LLM calls before a final answer.",
   retrieval: "The ability of the system to find relevant clinical documentation in the Vector Store.",
   generation: "Linguistic and clinical accuracy of the AI responses based on retrieved knowledge.",
   bert_score: "Uses advanced AI to compare the response to a 'gold standard' answer for meaning, not just words.",
@@ -138,6 +144,53 @@ const METRIC_DESCS = {
   specialist_escalations: "Total count of automatic escalations to Specialist Agents due to confidence thresholds or complexity.",
   human_escalations: "Total count of critical escalations requiring immediate Human Specialist intervention.",
   hot_spot: "The specific Agent or Disease Domain currently exhibiting the highest frequency of escalation events.",
+}
+
+// Original display names — matches patient portal sidebar labels
+const PRISM_DISEASE_NAMES = {
+  CA: 'Cancer Care',
+  DM: 'Diabetes',
+  CV: 'Cardiovascular',
+  MH: 'Mental Health',
+  RS: 'Respiratory',
+  DIA: 'Diabetes',
+  ONC: 'Cancer Care',
+  CAR: 'Cardiovascular',
+  HYP: 'Hypertension',
+  GEN: 'General Medicine',
+}
+
+const PRISM_AGENT_NAMES = {
+  CA1: 'Screening', CA2: 'Treatment', CA3: 'Supportive', CA4: 'Survivorship', CA5: 'Genetics', CA6: 'General',
+  DM1: 'Monitoring', DM2: 'Medication', DM3: 'Nutrition', DM4: 'Complications', DM5: 'Gestational', DM6: 'General',
+  CV1: 'Clinical', CV2: 'Emergency', CV3: 'Medications', CV4: 'Rehab', CV5: 'Nutrition', CV6: 'General',
+  MH1: 'Depression', MH2: 'Anxiety', MH3: 'Sleep', MH4: 'Trauma', MH5: 'Crisis', MH6: 'General',
+  RS1: 'Asthma', RS2: 'COPD', RS3: 'Rehab', RS4: 'Medications', RS5: 'Sleep Apnea', RS6: 'General',
+}
+
+function getPrismDiseaseName(code) {
+  if (!code) return '—'
+  const clean = code.toString().toUpperCase().trim()
+  const byLabel = {
+    'CANCER CARE': 'Cancer Care',
+    'CANCER': 'Cancer Care',
+    'ONCOLOGY': 'Cancer Care',
+    'DIABETES': 'Diabetes',
+    'CARDIOVASCULAR': 'Cardiovascular',
+    'CARDIOLOGY': 'Cardiovascular',
+    'MENTAL HEALTH': 'Mental Health',
+    'MENTAL ILLNESS': 'Mental Health',
+    'RESPIRATORY': 'Respiratory',
+    'CHRONIC RESPIRATORY': 'Respiratory',
+  }
+  return byLabel[clean] || PRISM_DISEASE_NAMES[clean] || code
+}
+
+function getPrismAgentName(id) {
+  if (!id) return '—'
+  let clean = id.toString().toUpperCase().trim()
+  if (clean.endsWith('-S') || clean.endsWith('-H')) clean = clean.slice(0, -2)
+  return PRISM_AGENT_NAMES[clean] || clean
 }
 
 const PRERAG_METRIC_DESCS = {
@@ -204,14 +257,16 @@ const NAV = [
   { id: 'escalation',   label: 'Escalations',       icon: <Activity size={15} className="text-[var(--error)]" /> },
   { id: 'revenue',      label: 'Subs & Revenue',    icon: <TrendingUp size={15} /> },
   { id: 'quality',      label: 'Quality Metrics',   icon: <Activity size={15} /> },
+  { id: 'recommend360', label: 'Recommendation 360° View', icon: <Target size={15} className="text-[var(--accent)]" /> },
   { id: 'audit',        label: 'Audit Log',         icon: <FileText size={15} /> },
   { id: 'security',     label: 'Security & JWT',    icon: <Lock size={15} /> },
 ]
 
 // ── Sections ───────────────────────────────────────────────────────────────
 
-function Overview({ data, llmcalls, ragas, userQuerySources }) {
+function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry }) {
   const [activeSubTab, setActiveSubTab] = useState('health')
+  const [retrievalTab, setRetrievalTab] = useState('cdc_pubmed')
   const [health, setHealth]       = useState(null)
   const [healthLoading, setHealthLoading] = useState(true)
   const [lastChecked, setLastChecked] = useState(null)
@@ -251,11 +306,47 @@ function Overview({ data, llmcalls, ragas, userQuerySources }) {
     return "0.0"
   }
 
+  const num = (v) => (v === undefined || v === null ? 0 : Number(v))
+
+  const llmInteractionCount = num(data?.llm_interactions ?? data?.llm_calls)
+  const cdcPubMedCount = num(data?.cdc_pubmed_retrievals ?? data?.chroma_calls)
+  const llmFallbackCount = num(data?.llm_fallback_retrievals ?? data?.llm_fallbacks)
+  const retrievalTotal = num(data?.retrieval_answer_total ?? (cdcPubMedCount + llmFallbackCount))
+  const clarifyingCount = num(data?.clarifying_responses)
+
   const coreMetrics = [
     { label: 'Total Patients', value: data?.users ?? '—', color: 'var(--accent)', icon: <Users size={14} />, sub: 'Registered', tip: METRIC_DESCS.patients },
-    { label: 'LLM Interactions', value: data?.llm_calls ?? '—', color: '#F472B6', icon: <Zap size={14} />, sub: 'Total Calls', tip: "Total number of successful AI-patient interactions across all agents." },
+    { label: 'LLM Interactions', value: llmInteractionCount, color: '#F472B6', icon: <Zap size={14} />, sub: 'Tracked API Calls', tip: METRIC_DESCS.llm_interactions_relation },
     { label: 'Active Sessions', value: data?.conversations ? (data.conversations / 2).toFixed(0) : '—', color: '#A78BFA', icon: <MessageSquare size={14} />, sub: 'This Week', tip: METRIC_DESCS.sessions },
     { label: 'RAGAS Composite', value: `${getRagasComposite()}%`, color: '#34D399', icon: <TrendingUp size={14} />, sub: 'Overall Quality', tip: METRIC_DESCS.composite },
+    { label: 'CDC / PubMed', value: cdcPubMedCount, color: '#60A5FA', icon: <Globe size={14} />, sub: 'Authority Corpus', tip: METRIC_DESCS.cdc_pubmed },
+    { label: 'LLM Fallbacks', value: llmFallbackCount, color: '#FB923C', icon: <Brain size={14} />, sub: 'No CDC/PubMed Hit', tip: METRIC_DESCS.llm_fallbacks },
+  ]
+
+  const pctOfTotal = (count) => retrievalTotal > 0
+    ? ((count / retrievalTotal) * 100).toFixed(1)
+    : '0.0'
+
+  const retrievalTabContent = {
+    cdc_pubmed: {
+      title: 'CDC / PubMed Retrieval',
+      count: cdcPubMedCount,
+      pct: pctOfTotal(cdcPubMedCount),
+      color: '#60A5FA',
+      body: 'Patient full answers where at least one retrieved chunk or citation was tagged as CDC or PubMed from the crawled source database.',
+    },
+    llm_fallback: {
+      title: 'LLM Knowledge Fallback',
+      count: llmFallbackCount,
+      pct: pctOfTotal(llmFallbackCount),
+      color: '#FB923C',
+      body: 'Patient full answers where CDC/PubMed evidence was not found in ChromaDB. The LLM generated the reply from its trained clinical knowledge plus conversation context.',
+    },
+  }
+  const activeRetrieval = retrievalTabContent[retrievalTab]
+  const retrievalSplitData = [
+    { name: 'CDC / PubMed', value: cdcPubMedCount, color: '#60A5FA' },
+    { name: 'LLM Fallback', value: llmFallbackCount, color: '#FB923C' },
   ]
 
   return (
@@ -286,12 +377,124 @@ function Overview({ data, llmcalls, ragas, userQuerySources }) {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10 text-sm text-[var(--warning)]">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} />
+            <span>{loadError || 'Overview metrics failed to load — cards show placeholders until data is fetched.'}</span>
+          </div>
+          {onRetry && (
+            <button onClick={onRetry} className="text-xs font-bold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 shrink-0">
+              Retry
+            </button>
+          )}
+        </div>
+      )}
       
       {/* Core Pulse Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         {coreMetrics.map(m => (
           <MetricCard key={m.label} label={m.label} value={m.value} color={m.color} icon={m.icon} sub={m.sub} tip={m.tip} />
         ))}
+      </div>
+
+      {/* Retrieval breakdown tabs */}
+      <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-bold text-[var(--text-main)]">Answer Retrieval Breakdown</div>
+            <div className="text-[11px] text-gray-500 mt-0.5">
+              Retrieval total: <span className="text-white font-semibold">{retrievalTotal}</span>
+              {' '}(CDC/PubMed {cdcPubMedCount} + LLM Fallback {llmFallbackCount})
+              {data?.assistant_messages != null && (
+                <span className="block mt-0.5 text-gray-600">
+                  From {data.assistant_messages} assistant messages in PostgreSQL
+                  {data?.clarifying_responses > 0 ? ` · ${data.clarifying_responses} clarifying excluded` : ''}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/5">
+            <button
+              onClick={() => setRetrievalTab('cdc_pubmed')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${retrievalTab === 'cdc_pubmed' ? 'bg-[#60A5FA] text-white' : 'text-gray-400 hover:text-white'}`}
+            >
+              CDC / PubMed
+            </button>
+            <button
+              onClick={() => setRetrievalTab('llm_fallback')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${retrievalTab === 'llm_fallback' ? 'bg-[#FB923C] text-white' : 'text-gray-400 hover:text-white'}`}
+            >
+              LLM Fallbacks
+            </button>
+          </div>
+        </div>
+
+        {/* Stacked split bar — share of retrieval total */}
+        {retrievalTotal > 0 && (
+          <div className="space-y-2">
+            <div className="flex h-3 rounded-full overflow-hidden border border-white/5">
+              <div
+                className="h-full transition-all duration-700"
+                style={{ width: `${pctOfTotal(cdcPubMedCount)}%`, background: '#60A5FA' }}
+                title={`CDC / PubMed: ${cdcPubMedCount} (${pctOfTotal(cdcPubMedCount)}%)`}
+              />
+              <div
+                className="h-full transition-all duration-700"
+                style={{ width: `${pctOfTotal(llmFallbackCount)}%`, background: '#FB923C' }}
+                title={`LLM Fallback: ${llmFallbackCount} (${pctOfTotal(llmFallbackCount)}%)`}
+              />
+            </div>
+            <div className="flex justify-between text-[10px] font-mono text-gray-500">
+              <span><span className="text-[#60A5FA] font-bold">CDC/PubMed</span> {pctOfTotal(cdcPubMedCount)}%</span>
+              <span><span className="text-[#FB923C] font-bold">LLM Fallback</span> {pctOfTotal(llmFallbackCount)}%</span>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-xl border border-white/5 bg-black/20 p-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="shrink-0">
+              <div className="text-xs uppercase tracking-wider text-gray-500">{activeRetrieval.title}</div>
+              <div className="flex items-baseline gap-3 mt-1">
+                <div className="text-3xl font-black" style={{ color: activeRetrieval.color }}>{activeRetrieval.count}</div>
+                <div className="text-sm text-gray-400">
+                  of <span className="text-white font-bold">{retrievalTotal}</span> retrievals
+                  <span className="ml-2 font-black" style={{ color: activeRetrieval.color }}>{activeRetrieval.pct}%</span>
+                </div>
+              </div>
+            </div>
+            <div className="text-[11px] text-gray-400 max-w-xl leading-relaxed">{activeRetrieval.body}</div>
+          </div>
+        </div>
+
+        {retrievalTotal > 0 && (
+          <div className="grid sm:grid-cols-2 gap-3">
+            {retrievalSplitData.map(item => (
+              <div key={item.name} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500">{item.name}</div>
+                  <div className="text-lg font-black mt-0.5" style={{ color: item.color }}>{item.value}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-black" style={{ color: item.color }}>{pctOfTotal(item.value)}%</div>
+                  <div className="text-[9px] text-gray-500">of total</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="text-[11px] text-gray-500 border-t border-white/5 pt-3 leading-relaxed">
+          <span className="text-gray-300 font-semibold">How this relates to LLM Interactions ({llmInteractionCount}):</span>{' '}
+          {METRIC_DESCS.llm_interactions_relation}
+          {clarifyingCount > 0 && (
+            <span className="block mt-1 text-gray-400">
+              Clarifying responses in DB: {clarifyingCount} (not included in retrieval total).
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Health Feature Section */}
@@ -417,73 +620,91 @@ function Overview({ data, llmcalls, ragas, userQuerySources }) {
   );
 }
 
+const RAGAS_CATEGORY_DEFINITIONS = {
+  retrieval: {
+    label: 'Retrieval Quality',
+    desc: 'Precision, recall and relevancy of retrieved medical context',
+    metrics: [
+      { key: 'context_precision', label: 'Context Precision', color: 'var(--accent)', direction: 'higher', insight: 'Measures the signal-to-noise ratio of retrieved documents. High precision means most retrieved content is relevant.', formula: 'AVG(precision@k) over top-k retrieved chunks vs. query relevance', tip: 'Measures the signal-to-noise ratio of retrieved documents. High precision means most retrieved content is relevant. [Higher is Better]' },
+      { key: 'context_recall', label: 'Context Recall', color: '#A78BFA', direction: 'higher', insight: 'Percentage of ground-truth information successfully captured in the retrieved context.', formula: 'recall = |ground_truth ∩ retrieved| / |ground_truth|', tip: 'Percentage of ground-truth information successfully captured in the retrieved context. [Higher is Better]' },
+      { key: 'answer_relevancy', label: 'Retrieval Relevancy', color: '#34D399', direction: 'higher', insight: 'Evaluates how well the retrieved context directly addresses the core user query.', formula: 'cosine_sim(query_embedding, context_embedding) averaged across chunks', tip: 'Evaluates how well the retrieved context directly addresses the core user query. [Higher is Better]' },
+      { key: 'utilization', label: 'Context Utilization', color: '#F472B6', direction: 'higher', insight: 'How effectively the LLM synthesizes the provided context into the final response.', formula: 'utilization = cited_context_tokens / total_context_tokens', tip: 'How effectively the LLM synthesizes the provided context into the final response. [Higher is Better]' },
+    ],
+  },
+  generation: {
+    label: 'Generation Quality',
+    desc: 'Faithfulness, correctness and similarity of generated responses',
+    metrics: [
+      { key: 'faithfulness', label: 'Faithfulness', color: '#34D399', direction: 'higher', insight: "The 'Golden Standard' metric. Measures if the answer is purely grounded in the context (no hallucinations).", formula: 'faithfulness = supported_claims / total_claims in response', tip: "The 'Golden Standard' metric. Measures if the answer is purely grounded in the context (no hallucinations). [Higher is Better]" },
+      { key: 'answer_relevancy', label: 'Answer Relevancy', color: 'var(--accent)', direction: 'higher', insight: "Assesses if the generated response is helpful and directly answers the patient's question.", formula: 'AVG(cosine_sim(answer, synthetic_questions)) via reverse-generation', tip: "Assesses if the generated response is helpful and directly answers the patient's question. [Higher is Better]" },
+      { key: 'answer_similarity', label: 'Answer Similarity', color: 'var(--warning)', direction: 'higher', insight: 'Semantic alignment between the generated answer and verified clinical ground truths.', formula: 'cosine_sim(answer_embedding, reference_embedding)', tip: 'Semantic alignment between the generated answer and verified clinical ground truths. [Higher is Better]' },
+      { key: 'answer_correctness', label: 'Answer Correctness', color: '#F472B6', direction: 'higher', insight: 'Fact-checking accuracy based on the provided clinical documentation.', formula: 'F1(semantic_match(answer, ground_truth), factual_overlap)', tip: 'Fact-checking accuracy based on the provided clinical documentation. [Higher is Better]' },
+    ],
+  },
+  efficiency: {
+    label: 'Context Efficiency',
+    desc: 'Evaluation of entity recall and noise sensitivity in context processing',
+    metrics: [
+      { key: 'entity_recall', label: 'Entity Recall', color: '#2DD4BF', direction: 'higher', insight: 'Ability to identify and extract critical medical entities (drugs, symptoms) from source text.', formula: 'entity_recall = extracted_entities / reference_entities', tip: 'Ability to identify and extract critical medical entities (drugs, symptoms) from source text. [Higher is Better]' },
+      { key: 'noise_sensitivity', label: 'Noise Sensitivity', color: '#F3752D', direction: 'lower', insight: 'Measures resilience against irrelevant or contradictory information in the context.', formula: 'noise_impact = score(clean_context) − score(noisy_context)', tip: 'Measures resilience against irrelevant or contradictory information in the context. [Lower is Better]' },
+      { key: 'conciseness', label: 'Conciseness', color: '#8E96B8', direction: 'higher', insight: 'Information density of the response; avoids fluff while maintaining clinical accuracy.', formula: 'conciseness = semantic_content / response_length', tip: 'Information density of the response; avoids fluff while maintaining clinical accuracy. [Higher is Better]' },
+      { key: 'token_efficiency', label: 'Token Efficiency', color: '#A78BFA', direction: 'higher', insight: 'Optimizing response length to minimize latency and token costs without quality loss.', formula: 'quality_score / total_tokens_used', tip: 'Optimizing response length to minimize latency and token costs without quality loss. [Higher is Better]' },
+    ],
+  },
+  accuracy: {
+    label: 'End-to-End Accuracy',
+    desc: 'Composite scoring and failure analysis across the full RAG pipeline',
+    metrics: [
+      { key: 'overall', label: 'Composite RAGAS', color: 'var(--warning)', direction: 'higher', insight: 'The weighted average of all core RAGAS metrics; the primary indicator of platform quality.', formula: 'Σ(metric_i × weight_i) / Σ(weight_i) across core RAGAS dimensions', tip: 'The weighted average of all core RAGAS metrics; the primary indicator of platform quality. [Higher is Better]' },
+      { key: 'failure_rate', label: 'Failure Rate', color: 'var(--error)', direction: 'lower', insight: 'Frequency of responses that fail to meet minimum clinical safety or grounding thresholds.', formula: 'failures / total_evaluated_sessions × 100', tip: 'Frequency of responses that fail to meet minimum clinical safety or grounding thresholds. [Lower is Better]' },
+      { key: 'critique_depth', label: 'Critique Depth', color: '#A78BFA', direction: 'higher', insight: 'Sophistication of the internal self-correction and validation logic.', formula: 'AVG(critique_iterations × validation_coverage)', tip: 'Sophistication of the internal self-correction and validation logic. [Higher is Better]' },
+      { key: 'coherence', label: 'Coherence', color: '#34D399', direction: 'higher', insight: 'Logical consistency and readability of the response for a non-technical patient.', formula: 'LLM-judge coherence score (1–5) normalized to 0–1', tip: 'Logical consistency and readability of the response for a non-technical patient. [Higher is Better]' },
+    ],
+  },
+  safety: {
+    label: 'Safety and Harm',
+    desc: 'Harmlessness, refusal precision and clinical disclaimer compliance',
+    metrics: [
+      { key: 'harmlessness', label: 'Harmlessness', color: '#34D399', direction: 'higher', insight: 'Validation that the model does not provide dangerous medical advice or toxic content.', formula: '1 − (harmful_responses / total_responses)', tip: 'Validation that the model does not provide dangerous medical advice or toxic content. [Higher is Better]' },
+      { key: 'refusal_precision', label: 'Refusal Precision', color: 'var(--accent)', direction: 'higher', insight: 'Accuracy in identifying and refusing queries that are outside of the clinical scope.', formula: 'TP_refusals / (TP_refusals + FP_refusals)', tip: 'Accuracy in identifying and refusing queries that are outside of the clinical scope. [Higher is Better]' },
+      { key: 'disclaimer_compliance', label: 'Disclaimer Compliance', color: 'var(--warning)', direction: 'higher', insight: 'Ensuring every response includes necessary legal and clinical disclaimers.', formula: 'responses_with_disclaimer / total_responses', tip: 'Ensuring every response includes necessary legal and clinical disclaimers. [Higher is Better]' },
+      { key: 'safe_messaging', label: 'Safe Messaging', color: '#F472B6', direction: 'higher', insight: 'Adherence to compassionate and safe communication standards for sensitive health topics.', formula: 'AVG(safe_tone_score) from guardrail classifier', tip: 'Adherence to compassionate and safe communication standards for sensitive health topics. [Higher is Better]' },
+    ],
+  },
+  linguistic: {
+    label: 'NLP Benchmarks',
+    desc: 'Semantic and linguistic evaluation using standard NLP metrics (BLEU, ROUGE, BERTScore)',
+    metrics: [
+      { key: 'bert_score', label: 'BERTScore', color: '#A78BFA', direction: 'higher', insight: 'Measures semantic similarity between the answer and reference using contextual BERT embeddings.', formula: 'F1 of token-level BERT precision and recall vs. reference', tip: 'Measures semantic similarity between the answer and reference using contextual BERT embeddings. [Higher is Better]' },
+      { key: 'bleu_score', label: 'BLEU Score', color: 'var(--accent)', direction: 'higher', insight: 'Bilingual Evaluation Understudy; measures n-gram overlap with a focus on precision and fluency.', formula: 'BP × exp(Σ w_n × log(p_n)) for n-gram precision', tip: 'Bilingual Evaluation Understudy; measures n-gram overlap with a focus on precision and fluency. [Higher is Better]' },
+      { key: 'rouge_score', label: 'ROUGE-L', color: '#34D399', direction: 'higher', insight: 'Recall-Oriented Understudy for Gisting Evaluation; focuses on how much reference content was captured.', formula: 'LCS_F1(answer, reference) longest common subsequence', tip: 'Recall-Oriented Understudy for Gisting Evaluation; focuses on how much reference content was captured. [Higher is Better]' },
+      { key: 'meteor_score', label: 'METEOR', color: '#F472B6', direction: 'higher', insight: 'Metric for Evaluation of Translation with Explicit ORdering; considers synonyms and word stemming.', formula: 'harmonic_mean(precision, recall) with synonym/stem matching', tip: 'Metric for Evaluation of Translation with Explicit ORdering; considers synonyms and word stemming. [Higher is Better]' },
+      { key: 'mrr_score', label: 'MRR', color: 'var(--warning)', direction: 'higher', insight: 'Mean Reciprocal Rank; evaluates the position of the first relevant document in the retrieved list.', formula: 'AVG(1 / rank_of_first_relevant_doc)', tip: 'Mean Reciprocal Rank; evaluates the position of the first relevant document in the retrieved list. [Higher is Better]' },
+      { key: 'perplexity', label: 'Perplexity', color: '#94A3B8', direction: 'lower', insight: 'Measures model uncertainty; lower values indicate more fluent and predictable medical responses.', formula: 'exp(−(1/N) × Σ log P(token_i | context))', tip: 'Measures model uncertainty; lower values indicate more fluent and predictable medical responses. [Lower is Better]' },
+    ],
+  },
+}
+
+const RAGAS_METRIC_COUNT = Object.values(RAGAS_CATEGORY_DEFINITIONS).reduce((n, c) => n + c.metrics.length, 0)
+
 function RAGASSection({ data }) {
   const [activeCategory, setActiveCategory] = useState('retrieval')
-  
-  const categories = {
-    retrieval: {
-      label: "Retrieval Quality",
-      desc: "Precision, recall and relevancy of retrieved medical context",
-      metrics: [
-        { key: 'context_precision', label: 'Context Precision', color: 'var(--accent)', tip: "Measures the signal-to-noise ratio of retrieved documents. High precision means most retrieved content is relevant. [Higher is Better]" },
-        { key: 'context_recall',    label: 'Context Recall',    color: '#A78BFA', tip: "Percentage of ground-truth information successfully captured in the retrieved context. [Higher is Better]" },
-        { key: 'answer_relevancy',  label: 'Retrieval Relevancy', color: '#34D399', tip: "Evaluates how well the retrieved context directly addresses the core user query. [Higher is Better]" },
-        { key: 'utilization',       label: 'Context Utilization', color: '#F472B6', tip: "How effectively the LLM synthesizes the provided context into the final response. [Higher is Better]" },
-      ]
-    },
-    generation: {
-      label: "Generation Quality",
-      desc: "Faithfulness, correctness and similarity of generated responses",
-      metrics: [
-        { key: 'faithfulness',      label: 'Faithfulness',       color: '#34D399', tip: "The 'Golden Standard' metric. Measures if the answer is purely grounded in the context (no hallucinations). [Higher is Better]" },
-        { key: 'answer_relevancy',  label: 'Answer Relevancy',   color: 'var(--accent)', tip: "Assesses if the generated response is helpful and directly answers the patient's question. [Higher is Better]" },
-        { key: 'answer_similarity', label: 'Answer Similarity',  color: 'var(--warning)', tip: "Semantic alignment between the generated answer and verified clinical ground truths. [Higher is Better]" },
-        { key: 'answer_correctness',label: 'Answer Correctness', color: '#F472B6', tip: "Fact-checking accuracy based on the provided clinical documentation. [Higher is Better]" },
-      ]
-    },
-    efficiency: {
-      label: "Context Efficiency",
-      desc: "Evaluation of entity recall and noise sensitivity in context processing",
-      metrics: [
-        { key: 'entity_recall',     label: 'Entity Recall',     color: '#2DD4BF', tip: "Ability to identify and extract critical medical entities (drugs, symptoms) from source text. [Higher is Better]" },
-        { key: 'noise_sensitivity', label: 'Noise Sensitivity', color: '#F3752D', tip: "Measures resilience against irrelevant or contradictory information in the context. [Lower is Better]" },
-        { key: 'conciseness',       label: 'Conciseness',       color: '#8E96B8', tip: "Information density of the response; avoids fluff while maintaining clinical accuracy. [Higher is Better]" },
-        { key: 'token_efficiency',  label: 'Token Efficiency',  color: '#A78BFA', tip: "Optimizing response length to minimize latency and token costs without quality loss. [Higher is Better]" },
-      ]
-    },
-    accuracy: {
-      label: "End-to-End Accuracy",
-      desc: "Composite scoring and failure analysis across the full RAG pipeline",
-      metrics: [
-        { key: 'overall',           label: 'Composite RAGAS',   color: 'var(--warning)', tip: "The weighted average of all core RAGAS metrics; the primary indicator of platform quality. [Higher is Better]" },
-        { key: 'failure_rate',      label: 'Failure Rate',      color: 'var(--error)', tip: "Frequency of responses that fail to meet minimum clinical safety or grounding thresholds. [Lower is Better]" },
-        { key: 'critique_depth',    label: 'Critique Depth',    color: '#A78BFA', tip: "Sophistication of the internal self-correction and validation logic. [Higher is Better]" },
-        { key: 'coherence',         label: 'Coherence',         color: '#34D399', tip: "Logical consistency and readability of the response for a non-technical patient. [Higher is Better]" },
-      ]
-    },
-    safety: {
-      label: "Safety and Harm",
-      desc: "Harmlessness, refusal precision and clinical disclaimer compliance",
-      metrics: [
-        { key: 'harmlessness',      label: 'Harmlessness',      color: '#34D399', tip: "Validation that the model does not provide dangerous medical advice or toxic content. [Higher is Better]" },
-        { key: 'refusal_precision', label: 'Refusal Precision', color: 'var(--accent)', tip: "Accuracy in identifying and refusing queries that are outside of the clinical scope. [Higher is Better]" },
-        { key: 'disclaimer_compliance', label: 'Disclaimer Compliance', color: 'var(--warning)', tip: "Ensuring every response includes necessary legal and clinical disclaimers. [Higher is Better]" },
-        { key: 'safe_messaging',    label: 'Safe Messaging',    color: '#F472B6', tip: "Adherence to compassionate and safe communication standards for sensitive health topics. [Higher is Better]" },
-      ]
-    },
-    linguistic: {
-      label: "NLP Benchmarks",
-      desc: "Semantic and linguistic evaluation using standard NLP metrics (BLEU, ROUGE, BERTScore)",
-      metrics: [
-        { key: 'bert_score',  label: 'BERTScore',  color: '#A78BFA', tip: "Measures semantic similarity between the answer and reference using contextual BERT embeddings. [Higher is Better]" },
-        { key: 'bleu_score',  label: 'BLEU Score', color: 'var(--accent)', tip: "Bilingual Evaluation Understudy; measures n-gram overlap with a focus on precision and fluency. [Higher is Better]" },
-        { key: 'rouge_score', label: 'ROUGE-L',   color: '#34D399', tip: "Recall-Oriented Understudy for Gisting Evaluation; focuses on how much reference content was captured. [Higher is Better]" },
-        { key: 'meteor_score',  label: 'METEOR',     color: '#F472B6', tip: "Metric for Evaluation of Translation with Explicit ORdering; considers synonyms and word stemming. [Higher is Better]" },
-        { key: 'mrr_score',         label: 'MRR',        color: 'var(--warning)', tip: "Mean Reciprocal Rank; evaluates the position of the first relevant document in the retrieved list. [Higher is Better]" },
-        { key: 'perplexity',  label: 'Perplexity', color: '#94A3B8', tip: "Measures model uncertainty; lower values indicate more fluent and predictable medical responses. [Lower is Better]" },
-      ]
-    }
+  const [showDefinitions, setShowDefinitions] = useState(false)
+  const [expandedDefCategories, setExpandedDefCategories] = useState(new Set())
+
+  const categories = RAGAS_CATEGORY_DEFINITIONS
+
+  const toggleDefCategory = (id) => {
+    setExpandedDefCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
+
+  const directionLabel = (dir) => (dir === 'lower' ? 'Lower is Better' : 'Higher is Better')
+  const directionColor = (dir) => (dir === 'lower' ? 'var(--error)' : 'var(--success)')
 
   const rows = (data || []).slice(0, 100)
   const currentGroup = categories[activeCategory]
@@ -510,8 +731,22 @@ function RAGASSection({ data }) {
 
   return (
     <div className="animate-in fade-in duration-700">
-      <SectionHeader title="RAGAS Intelligence" sub="Multi-dimensional assessment of Retrieval and Generation quality" />
-      
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
+        <SectionHeader title="RAGAS Intelligence" sub="Multi-dimensional assessment of Retrieval and Generation quality" />
+        <button
+          type="button"
+          onClick={() => setShowDefinitions(v => !v)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition-all shrink-0
+            ${showDefinitions
+              ? 'bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/40 shadow-[0_0_20px_rgba(45,212,191,0.12)]'
+              : 'bg-white/5 text-[var(--text-dim)] border-white/10 hover:text-white hover:border-white/20'}`}
+        >
+          <BookOpen size={14} />
+          Metrics Definition
+          {showDefinitions && <X size={12} className="opacity-60" />}
+        </button>
+      </div>
+
       {/* Category Tabs */}
       <div className="flex flex-wrap gap-2 mb-6 bg-white/5 p-1 rounded-2xl w-fit">
         {Object.entries(categories).map(([id, cat]) => (
@@ -531,16 +766,42 @@ function RAGASSection({ data }) {
       <div className="mb-6">
         <div className="text-sm font-bold text-[var(--text-main)] mb-1">{currentGroup.label}</div>
         <div className="text-xs text-[var(--text-dim)] mb-4">{currentGroup.desc}</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {currentGroup.metrics.map(m => (
-            <TooltipUI key={m.key} content={m.tip}>
-              <MetricCard label={m.label} value={`${avg(m.key)}%`} color={m.color} icon={<TrendingUp size={13} />} />
-            </TooltipUI>
-          ))}
-        </div>
+        {showDefinitions ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 items-stretch">
+            {currentGroup.metrics.map(m => (
+              <div key={m.key} className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5 hover:border-white/10 transition-all relative overflow-hidden h-full flex flex-col">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 blur-3xl" />
+                <div className="relative z-10 flex flex-col flex-1 min-h-[140px]">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[10px] text-[var(--text-dim)] font-bold uppercase tracking-[0.1em]">{m.label}</span>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg shrink-0" style={{ background: m.color + '20', color: m.color }}>
+                      <TrendingUp size={13} />
+                    </div>
+                  </div>
+                  <div className="text-2xl font-black tracking-tight mb-2" style={{ color: m.color }}>{avg(m.key)}%</div>
+                  <p className="text-[10px] text-[var(--text-dim)] leading-relaxed flex-1">{m.insight}</p>
+                  <span
+                    className="text-[9px] font-bold uppercase tracking-wider mt-3 pt-2 border-t border-white/5 block"
+                    style={{ color: directionColor(m.direction) }}
+                  >
+                    {directionLabel(m.direction)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {currentGroup.metrics.map(m => (
+              <TooltipUI key={m.key} content={m.tip}>
+                <MetricCard label={m.label} value={`${avg(m.key)}%`} color={m.color} icon={<TrendingUp size={13} />} />
+              </TooltipUI>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid lg:grid-cols-3 gap-6 mb-6">
         <div className="lg:col-span-2 card p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="text-sm font-bold">{currentGroup.label} Trend</div>
@@ -618,6 +879,95 @@ function RAGASSection({ data }) {
         </div>
       </div>
 
+      {showDefinitions && (
+        <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-500">
+          <div className="card p-6 border-[var(--accent)]/20 bg-gradient-to-br from-[var(--accent)]/5 via-transparent to-transparent">
+            <div className="flex items-start justify-between gap-4 mb-5">
+              <div>
+                <h3 className="font-disp font-bold text-lg text-[var(--text-main)]">RAGAS Metrics Definition — Calculation Reference</h3>
+                <p className="text-sm text-[var(--text-dim)] mt-1 max-w-3xl leading-relaxed">
+                  RAGAS evaluates the full retrieval-augmented generation pipeline across{' '}
+                  <strong className="text-[var(--text-main)]">6 categories</strong> and{' '}
+                  <strong className="text-[var(--text-main)]">{RAGAS_METRIC_COUNT} parameters</strong>.
+                  Expand each category below to view its metrics, formulas, and scoring direction.
+                </p>
+              </div>
+              <Badge color="var(--accent)">{RAGAS_METRIC_COUNT} Metrics</Badge>
+            </div>
+
+            <div className="grid sm:grid-cols-3 gap-3 mb-6">
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+                <div className="text-[10px] font-bold text-[var(--text-dim)] uppercase tracking-widest mb-1">Score Range</div>
+                <p className="text-[11px] text-[var(--text-dim)]">All metrics normalized to 0–100% for dashboard display (raw RAGAS scores are 0–1).</p>
+              </div>
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+                <div className="text-[10px] font-bold text-[var(--text-dim)] uppercase tracking-widest mb-1">Evaluation Window</div>
+                <p className="text-[11px] text-[var(--text-dim)]">Sliding window of the last 1,000 interactions across all disease agents.</p>
+              </div>
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+                <div className="text-[10px] font-bold text-[var(--text-dim)] uppercase tracking-widest mb-1">Categories</div>
+                <p className="text-[11px] text-[var(--text-dim)]">Retrieval · Generation · Efficiency · Accuracy · Safety · NLP Benchmarks</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {Object.entries(categories).map(([id, cat]) => {
+                const isExpanded = expandedDefCategories.has(id)
+                return (
+                  <div key={id} className="rounded-2xl border border-white/10 bg-[var(--bg-card)]/80 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleDefCategory(id)}
+                      className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-white/[0.03] transition-colors"
+                    >
+                      {isExpanded
+                        ? <ChevronDown size={16} className="text-[var(--accent)] shrink-0" />
+                        : <ChevronRight size={16} className="text-[var(--text-dim)] shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-[var(--text-main)]">{cat.label}</span>
+                          <Badge color="var(--accent)">{cat.metrics.length} parameters</Badge>
+                        </div>
+                        <p className="text-[11px] text-[var(--text-dim)] mt-0.5">{cat.desc}</p>
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="px-5 pb-4 space-y-3 border-t border-white/5 pt-3 animate-in fade-in slide-in-from-top-1 duration-300">
+                        {cat.metrics.map(m => (
+                          <div key={m.key} className="rounded-xl border border-white/10 bg-black/20 overflow-hidden" style={{ borderLeftColor: m.color, borderLeftWidth: 3 }}>
+                            <div className="px-4 py-3">
+                              <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                                <span className="text-sm font-bold text-[var(--text-main)]">{m.label}</span>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ color: directionColor(m.direction), background: directionColor(m.direction) + '18' }}>
+                                  {directionLabel(m.direction)}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[var(--text-dim)] leading-relaxed mb-3">{m.insight}</p>
+                              <div>
+                                <div className="text-[10px] font-bold text-[var(--accent)] uppercase tracking-widest mb-1">Formula</div>
+                                <p className="text-[11px] font-mono text-[var(--text-main)] bg-black/30 rounded-lg px-3 py-2 border border-white/5">{m.formula}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <p className="mt-5 pt-4 border-t border-white/10 text-[10px] text-[var(--text-dim)] leading-relaxed">
+              Scores are computed per evaluation session and aggregated across disease agents.
+              Production deployments use the RAGAS evaluation framework with clinical ground-truth references;
+              stored evaluation records power the live dashboard above.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!showDefinitions && (
       <div className="mt-8">
         <div className="text-sm font-bold mb-4">Recent Evaluations (Category: {currentGroup.label})</div>
         <div className="card overflow-hidden">
@@ -751,8 +1101,8 @@ function RAGASSection({ data }) {
                     <td className="px-4 py-3 text-ink3 font-mono text-[10px]">
                       {r && r.created_at ? (
                         <>
-                          <span className="text-[var(--text-main)] font-bold">{new Date(r.created_at).toLocaleDateString()}</span>
-                          <span className="opacity-50 ml-1">{new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span className="text-[var(--text-main)] font-bold">{formatDate(r.created_at)}</span>
+                          <span className="opacity-50 ml-1">{formatTime(r.created_at, { hour: '2-digit', minute: '2-digit' })}</span>
                         </>
                       ) : "—"}
                     </td>
@@ -763,11 +1113,11 @@ function RAGASSection({ data }) {
           </div>
         </div>
       </div>
+      )}
     </div>
   )
 }
 
-const RAI_COUNTRIES = ['Brazil', 'Mexico', 'Colombia', 'Argentina', 'Chile', 'Peru']
 const RAI_DISEASES = ['Cancer Care', 'Diabetes', 'Cardiovascular', 'Mental Illness', 'Respiratory']
 
 const RAI_COUNTRY_CONTEXT = {
@@ -777,7 +1127,22 @@ const RAI_COUNTRY_CONTEXT = {
   Argentina:  { law: 'PDPA',        locale: 'es-AR', regulator: 'ANMAT' },
   Chile:      { law: 'Ley 19.628',  locale: 'es-CL', regulator: 'ISP Chile' },
   Peru:       { law: 'Ley 29733',   locale: 'es-PE', regulator: 'DIGEMID' },
+  Bolivia:    { law: 'Ley 164',     locale: 'es-BO', regulator: 'AGEMED' },
+  Uruguay:    { law: 'Ley 18.331',  locale: 'es-UY', regulator: 'MSP Uruguay' },
+  Ecuador:    { law: 'Ley Orgánica', locale: 'es-EC', regulator: 'ARCSA' },
+  Venezuela:  { law: 'Ley de Protección', locale: 'es-VE', regulator: 'INHRR' },
+  'Costa Rica': { law: 'Ley 8968',  locale: 'es-CR', regulator: 'Ministerio de Salud' },
+  Guatemala:  { law: 'Decreto 57-2008', locale: 'es-GT', regulator: 'MSPAS' },
+  Panama:     { law: 'Ley 81',      locale: 'es-PA', regulator: 'MINSA' },
+  'Dominican Republic': { law: 'Ley 172-13', locale: 'es-DO', regulator: 'DIGEMAPS' },
 }
+
+const getTerritoryContext = (country) =>
+  RAI_COUNTRY_CONTEXT[country] || {
+    law: 'Regional PDPA',
+    locale: 'es-* / pt-BR',
+    regulator: 'National Health Authority',
+  }
 
 const RAI_DISEASE_WEIGHTS = {
   'Cancer Care':      { clinical_risk: 1.15, equity_weight: 1.10, transparency_weight: 1.12 },
@@ -903,18 +1268,65 @@ const RESPONSIBLE_AI_METRIC_DEFINITIONS = [
 ]
 
 function ResponsibleAIScorecard() {
-  const [country, setCountry] = useState('Brazil')
-  const [disease, setDisease] = useState('Diabetes')
-  const [loading, setLoading] = useState(false)
+  const [country, setCountry] = useState('')
+  const [disease, setDisease] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [showDefinitions, setShowDefinitions] = useState(false)
+  const [scorecard, setScorecard] = useState(null)
+  const [fetchError, setFetchError] = useState(null)
 
-  const countries = RAI_COUNTRIES
-  const diseases  = RAI_DISEASES
-  
-  const getScore = (metric, c, d) => {
-    const seed = (metric.length + c.length + d.length) % 40
-    return 60 + seed
+  const fetchScorecard = (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true)
+    else setLoading(true)
+    setFetchError(null)
+    return api.get('/admin/scorecard')
+      .then(r => {
+        const data = r.data || {}
+        setScorecard(data)
+        setFetchError(null)
+        const nextCountries = data.countries || []
+        setCountry(prev => (prev && nextCountries.includes(prev) ? prev : nextCountries[0] || ''))
+      })
+      .catch(err => {
+        console.error('Failed to fetch Responsible AI scorecard:', err)
+        const status = err.response?.status
+        const detail = err.response?.data?.detail || err.message || 'Unknown error'
+        const hint = status === 404
+          ? ' Backend API route not found — stop and restart the FastAPI server (python run.py or PRISM Backend launch config).'
+          : ''
+        setFetchError(`${detail}${hint}`)
+        toast.error(status === 404 ? 'Scorecard API not found — restart backend' : 'Could not load scorecard data')
+      })
+      .finally(() => {
+        setLoading(false)
+        setRefreshing(false)
+      })
   }
+
+  useEffect(() => {
+    fetchScorecard()
+  }, [])
+
+  useEffect(() => {
+    if (!scorecard || !country) return
+    const available = scorecard.diseases_by_country?.[country] || []
+    if (available.length && !available.includes(disease)) {
+      setDisease(available[0])
+    }
+  }, [country, scorecard, disease])
+
+  const countries = scorecard?.countries || []
+  const diseases = (scorecard?.diseases_by_country?.[country]?.length
+    ? scorecard.diseases_by_country[country]
+    : RAI_DISEASES)
+  const territoryChartData = (scorecard?.country_user_counts || [])
+    .map(c => ({ country: c.country, users: c.user_count, is_latam: c.is_latam }))
+  const totalLatamUsers = scorecard?.total_latam_users ?? 0
+  const totalUsers = scorecard?.total_users ?? territoryChartData.reduce((s, c) => s + c.users, 0)
+  const metricKey = country && disease ? `${country}|${disease}` : ''
+  const liveMetrics = scorecard?.metrics?.[metricKey] || {}
+  const patientCount = scorecard?.patient_counts?.[metricKey] ?? 0
 
   const metrics = [
     { label: 'Fairness & Bias',           key: 'fairness',  desc: 'Detection of demographic or clinical bias in model responses' },
@@ -926,6 +1338,8 @@ function ResponsibleAIScorecard() {
     { label: 'Digital Inclusion',         key: 'inclusion', desc: 'Accessibility and UX performance across diverse hardware' },
   ]
 
+  const getScore = (metricKey) => liveMetrics[metricKey] ?? 0
+
   const getRisk = (score) => {
     if (score > 85) return { label: 'Low Risk', color: 'var(--success)', badge: 'PASS' }
     if (score > 75) return { label: 'Medium Risk', color: 'var(--warning)', badge: 'WARN' }
@@ -933,15 +1347,61 @@ function ResponsibleAIScorecard() {
   }
 
   const handleRefresh = () => {
-    setLoading(true)
-    setTimeout(() => {
-      setLoading(false)
-      toast.success(`Scorecard updated for ${country} / ${disease}`)
-    }, 800)
+    fetchScorecard(true).then(() => {
+      toast.success(`Scorecard updated for ${country}${disease ? ` / ${disease}` : ''}`)
+    })
   }
 
-  const territoryCtx = RAI_COUNTRY_CONTEXT[country] || {}
+  const territoryCtx = getTerritoryContext(country)
   const diseaseCtx = RAI_DISEASE_WEIGHTS[disease] || {}
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-[var(--text-dim)] text-sm">
+        <RefreshCw size={18} className="animate-spin mr-2" />
+        Loading territorial compliance data…
+      </div>
+    )
+  }
+
+  if (fetchError) {
+    return (
+      <div>
+        <SectionHeader
+          title="Responsible AI Scorecard"
+          sub="LATAM Territorial Compliance & Clinical Safety Monitoring"
+        />
+        <div className="card p-10 text-center mt-6 border-[var(--error)]/20">
+          <AlertCircle size={32} className="mx-auto mb-3 text-[var(--error)] opacity-80" />
+          <p className="text-sm text-[var(--text-main)] font-bold mb-1">Could not load scorecard</p>
+          <p className="text-xs text-[var(--text-dim)] mb-4">{fetchError}</p>
+          <button
+            onClick={() => fetchScorecard(true)}
+            className="inline-flex items-center gap-2 bg-[var(--accent)] text-white px-4 py-2 rounded-xl text-xs font-bold"
+          >
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!countries.length) {
+    return (
+      <div>
+        <SectionHeader
+          title="Responsible AI Scorecard"
+          sub="LATAM Territorial Compliance & Clinical Safety Monitoring"
+        />
+        <div className="card p-10 text-center mt-6">
+          <Globe size={32} className="mx-auto mb-3 text-[var(--text-dim)] opacity-50" />
+          <p className="text-sm text-[var(--text-dim)]">
+            No patient territories found in the database yet. Countries appear here automatically when patients register from LATAM regions.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -967,11 +1427,85 @@ function ResponsibleAIScorecard() {
             onClick={handleRefresh}
             className="flex items-center gap-2 bg-[var(--accent)] text-white px-5 py-2 rounded-xl text-xs font-bold hover:opacity-90 transition-all shadow-lg shadow-[var(--accent)]/20"
           >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             Recalculate Scorecard
           </button>
         </div>
       </div>
+
+      <div className="grid sm:grid-cols-3 gap-4 mb-6">
+        <MetricCard
+          label="Total Users"
+          value={totalUsers}
+          sub={`${totalLatamUsers} in LATAM territories`}
+          color="#2DD4BF"
+          icon={<Users size={16} />}
+          tip="Registered portal users grouped by country from the users table."
+        />
+        <MetricCard
+          label="Active Territories"
+          value={countries.length}
+          sub="Countries with registered users"
+          color="#818CF8"
+          icon={<Globe size={16} />}
+          tip="Only countries with at least one user in the database appear here."
+        />
+        <MetricCard
+          label="Patients in View"
+          value={patientCount}
+          sub={`${country} · ${disease || '—'}`}
+          color="#F472B6"
+          icon={<Activity size={16} />}
+          tip="Patients in the selected territory and disease program used to compute compliance scores."
+        />
+      </div>
+
+      {territoryChartData.length > 0 && (
+        <div className="card p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-disp font-bold text-sm uppercase tracking-wider text-[var(--text-dim)]">
+                Users by Territory
+              </h3>
+              <p className="text-[10px] text-[var(--text-dim)] mt-0.5">
+                Live counts from the users table — new countries appear when users register
+              </p>
+            </div>
+            <Badge color="var(--accent)">{totalUsers} total</Badge>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={territoryChartData} margin={{ top: 10, right: 15, left: 5, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis
+                  dataKey="country"
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                  label={{ value: 'Registered Users', angle: -90, position: 'insideLeft', offset: 10, fill: 'var(--text-dim)', fontSize: 10 }}
+                />
+                <Tooltip
+                  contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 11 }}
+                  cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                  formatter={(value) => [`${value} users`, 'Count']}
+                />
+                <Bar dataKey="users" fill="var(--accent)" radius={[8, 8, 0, 0]} name="Users">
+                  {territoryChartData.map((entry, index) => (
+                    <Cell
+                      key={`territory-${entry.country}`}
+                      fill={entry.is_latam ? (index % 2 === 0 ? 'var(--accent)' : '#818CF8') : '#64748B'}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {showDefinitions && (
         <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-500">
@@ -1013,7 +1547,7 @@ function ResponsibleAIScorecard() {
             <div className="space-y-4">
               {RESPONSIBLE_AI_METRIC_DEFINITIONS.map((def, idx) => {
                 const Icon = def.icon
-                const liveScore = getScore(def.key, country, disease)
+                const liveScore = getScore(def.key)
                 const risk = getRisk(liveScore)
                 return (
                   <div key={def.key} className="rounded-2xl border border-white/10 bg-[var(--bg-card)]/80 overflow-hidden">
@@ -1073,7 +1607,7 @@ function ResponsibleAIScorecard() {
               <p className="text-[10px] text-[var(--text-dim)] leading-relaxed">
                 <strong className="text-[var(--text-main)]">Cross-matrix rule:</strong> Scores are never pooled across countries or diseases.
                 Select a territory and disease in the filters below; the scorecard recalculates all seven metrics for that matrix cell only.
-                Live demo scores use a deterministic seed from territory + disease + metric key; production deployments substitute guardrail events, RAGAS, CQS, and audit telemetry.
+                Territories and user counts are loaded live from registered patients; compliance scores use patient feedback, CQS, frustration, and confidence telemetry.
               </p>
             </div>
           </div>
@@ -1088,16 +1622,20 @@ function ResponsibleAIScorecard() {
               <Globe size={12} /> Select Territory
             </div>
             <div className="space-y-1">
-              {countries.map(c => (
+              {countries.map(c => {
+                const count = scorecard?.country_user_counts?.find(x => x.country === c)?.user_count ?? 0
+                return (
                 <button
                   key={c}
                   onClick={() => setCountry(c)}
-                  className={`w-full text-left px-4 py-2.5 rounded-xl text-xs font-bold transition-all
+                  className={`w-full text-left px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2
                     ${country === c ? 'bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20' : 'text-[var(--text-dim)] hover:bg-white/5'}`}
                 >
-                  {c}
+                  <span>{c}</span>
+                  <span className="text-[10px] font-mono opacity-70">{count}</span>
                 </button>
-              ))}
+                )
+              })}
             </div>
           </div>
 
@@ -1120,22 +1658,21 @@ function ResponsibleAIScorecard() {
           </div>
         </div>
 
-        {/* Metrics Grid */}
-        <div className="lg:col-span-3">
-          <div className="card p-6 bg-[var(--grad-primary)]/5 border-[var(--accent)]/10 mb-6">
+        <div className="lg:col-span-3 space-y-6">
+          <div className="card p-6 bg-[var(--grad-primary)]/5 border-[var(--accent)]/10">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-lg font-black tracking-tight">{country} — {disease} Overview</h3>
               <Badge color="var(--warning)">Live Assessment</Badge>
             </div>
             <p className="text-xs text-[var(--text-dim)] leading-relaxed max-w-2xl">
-              Metrics are derived from real-time patient interactions in {country} specifically for {disease} agents. 
+              Metrics are derived from {patientCount} registered {patientCount === 1 ? 'patient' : 'patients'} in {country} for {disease} agents.
               Assessment covers linguistic accuracy, cultural sensitivity, and clinical guardrail adherence.
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
             {metrics.map(m => {
-              const score = getScore(m.key, country, disease)
+              const score = getScore(m.key)
               const risk = getRisk(score)
               return (
                 <div key={m.key} className="card p-5 group hover:border-[var(--accent)]/30 transition-all duration-500">
@@ -1169,43 +1706,101 @@ function ResponsibleAIScorecard() {
   )
 }
 
-function PreRAGSection({ docs: initialDocs }) {
+const PRERAG_REPORT_TIER1 = [
+  { id: 'G1', name: 'Data Quality', max: 7 }, { id: 'G2', name: 'Duplicate Check', max: 5 },
+  { id: 'G3', name: 'Copyright', max: 4 }, { id: 'G4', name: 'Freshness', max: 4 },
+  { id: 'G5', name: 'PDF Quality', max: 5 }, { id: 'G6', name: 'Coverage', max: 3 },
+  { id: 'G7', name: 'PII Detection', max: 4 }, { id: 'G8', name: 'Offensive Filter', max: 4 },
+  { id: 'G9', name: 'Metadata', max: 4 },
+]
+const PRERAG_REPORT_TIER2 = [
+  { id: 'D1', name: 'Source Authority', max: 14 }, { id: 'D2', name: 'Evidence Grade', max: 11 },
+  { id: 'D3', name: 'Peer Review', max: 7 }, { id: 'D4', name: 'Recency', max: 6 },
+  { id: 'D5', name: 'LATAM Relevance', max: 5 }, { id: 'D6', name: 'Clinical Spec.', max: 5 },
+  { id: 'D7', name: 'Sample Size', max: 4 }, { id: 'D8', name: 'Completeness', max: 3 },
+  { id: 'D9', name: 'COI Declaration', max: 3 }, { id: 'D10', name: 'Citation Impact', max: 2 },
+]
+
+function preragTierBadge(score) {
+  if (score >= 85) return { label: '★ GOLD', color: 'var(--warning)' }
+  if (score >= 70) return { label: '◆ SILVER', color: 'var(--accent)' }
+  if (score >= 55) return { label: '◐ BORDERLINE', color: '#F3752D' }
+  return { label: '✕ REJECTED', color: 'var(--error)' }
+}
+
+const PRE_RAG_ALL_DEFINITIONS = [...PRE_RAG_TIER1_DEFINITIONS, ...PRE_RAG_TIER2_DEFINITIONS]
+
+const PRERAG_ORIGIN_LABELS = {
+  manual: 'Manual Upload',
+  crawl_pubmed: 'Crawled · PubMed',
+  crawl_cdc: 'Crawled · CDC',
+  crawl: 'Crawled',
+  indexed: 'Indexed',
+}
+
+function preragOriginLabel(origin, docType) {
+  if (origin && PRERAG_ORIGIN_LABELS[origin]) return PRERAG_ORIGIN_LABELS[origin]
+  const dt = (docType || '').toLowerCase()
+  if (dt === 'upload') return PRERAG_ORIGIN_LABELS.manual
+  if (dt.includes('pubmed')) return PRERAG_ORIGIN_LABELS.crawl_pubmed
+  if (dt.includes('cdc')) return PRERAG_ORIGIN_LABELS.crawl_cdc
+  return PRERAG_ORIGIN_LABELS.crawl
+}
+
+function PreRAGSection() {
   const [report, setReport] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedDoc, setSelectedDoc] = useState(null)
   const [showDefinitions, setShowDefinitions] = useState(false)
 
+  const loadReport = (quiet = false) => {
+    if (!quiet) setLoading(true)
+    return api.get('/admin/prerag/report')
+      .then(r => {
+        setReport(r.data)
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error("Failed to fetch Pre-RAG report:", err)
+        setLoading(false)
+      })
+  }
+
   useEffect(() => {
-    api.get('/admin/prerag/report')
-    .then(r => {
-      setReport(r.data)
-      setLoading(false)
-    })
-    .catch(err => {
-      console.error("Failed to fetch Pre-RAG report:", err)
-      setLoading(false)
-    })
+    loadReport()
+    const timer = setInterval(() => loadReport(true), 5000)
+    return () => clearInterval(timer)
   }, [])
 
-  const TIER1 = [
-    { id: 'G1', name: 'Data Quality',     max: 7 }, { id: 'G2', name: 'Duplicate Check', max: 5 },
-    { id: 'G3', name: 'Copyright',        max: 4 }, { id: 'G4', name: 'Freshness',       max: 4 },
-    { id: 'G5', name: 'PDF Quality',      max: 4 }, { id: 'G6', name: 'Coverage',        max: 6 },
-    { id: 'G7', name: 'PII Detection',    max: 4 }, { id: 'G8', name: 'Offensive Filter', max: 3 },
-    { id: 'G9', name: 'Metadata',         max: 3 },
-  ]
-  const TIER2 = [
-    { id: 'D1', name: 'Source Authority', max: 14 }, { id: 'D2', name: 'Evidence Grade', max: 11 },
-    { id: 'D3', name: 'Peer Review',      max: 8  }, { id: 'D4', name: 'Recency',        max: 7  },
-    { id: 'D5', name: 'LATAM Relevance',  max: 6  }, { id: 'D6', name: 'Clinical Spec.', max: 5  },
-    { id: 'D7', name: 'Sample Size',      max: 4  }, { id: 'D8', name: 'Completeness',   max: 2  },
-    { id: 'D9', name: 'COI Declaration',  max: 2  }, { id: 'D10',name: 'Citation Impact', max: 1 },
-  ]
-  const tierBadge = (score) => {
-    if (score >= 85) return { label: '★ GOLD',       color: 'var(--warning)' }
-    if (score >= 70) return { label: '◆ SILVER',     color: 'var(--accent)' }
-    if (score >= 55) return { label: '◐ BORDERLINE', color: '#F3752D' }
-    return { label: '✕ REJECTED', color: 'var(--error)' }
+  const TIER1 = PRERAG_REPORT_TIER1
+  const TIER2 = PRERAG_REPORT_TIER2
+  const tierBadge = preragTierBadge
+
+  const renderDimCard = (g, scoreColor, barColor) => {
+    if (!selectedDoc) return null
+    const score = selectedDoc.dim_scores?.[g.id] ?? 0
+    const pct = Math.min(100, (score / g.max) * 100)
+    const atMax = score >= g.max - 0.05
+    const gapText = selectedDoc.gap_reasons?.[g.id]
+      || PRE_RAG_ALL_DEFINITIONS.find(d => d.id === g.id)?.gap
+    return (
+      <div key={g.id} className="p-3 rounded-xl bg-white/5 border border-white/5">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-[10px] font-bold text-ink2">{g.name}</span>
+          <span className={`text-[10px] font-mono font-bold ${scoreColor}`}>{score}/{g.max}</span>
+        </div>
+        <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+          <div className={`h-full ${barColor} rounded-full transition-all duration-1000`} style={{ width: `${pct}%` }} />
+        </div>
+        {atMax ? (
+          <p className="text-[10px] text-[var(--success)] mt-2">Full score — no scoring gap.</p>
+        ) : (
+          <p className="text-[10px] text-[var(--warning)] mt-2 leading-relaxed border border-[var(--warning)]/20 rounded-lg px-2 py-1.5 bg-[var(--warning)]/5">
+            <span className="font-bold">Scoring gap: </span>{gapText || 'Score below maximum for this checkpoint.'}
+          </p>
+        )}
+      </div>
+    )
   }
   
   const renderDefinitionCard = (def, tierColor, tierLabel) => (
@@ -1354,6 +1949,7 @@ function PreRAGSection({ docs: initialDocs }) {
           <thead>
             <tr className="bg-bg3 border-b border-line text-ink3 font-mono uppercase tracking-widest text-[9px]">
               <th className="px-3 py-3">Document Title</th>
+              <th className="px-3 py-3">Source</th>
               <th className="px-3 py-3">Agent Scope</th>
               <th className="px-3 py-3">Tier 1</th>
               <th className="px-3 py-3">Tier 2</th>
@@ -1364,14 +1960,27 @@ function PreRAGSection({ docs: initialDocs }) {
           </thead>
           <tbody className="divide-y divide-line">
             {loading ? (
-              <tr><td colSpan={7} className="p-8 text-center text-ink3 animate-pulse">Loading real-time readiness data...</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-ink3 animate-pulse">Loading real-time readiness data...</td></tr>
             ) : report.map(d => {
               const badge = tierBadge(d.prerag_score)
+              const originLabel = preragOriginLabel(d.ingest_origin, d.doc_type)
+              const isCrawled = d.ingest_origin?.startsWith('crawl') || ['pubmed', 'pubmed_abstract', 'cdc', 'cdc_web', 'web'].includes((d.doc_type || '').toLowerCase())
               return (
                 <tr key={d.id} className="hover:bg-white/5 transition-colors group">
                   <td className="px-3 py-3">
                     <div className="font-bold text-ink truncate max-w-[200px]">{d.title}</div>
-                    <div className="text-[9px] text-ink3">{d.source}</div>
+                    <div className="text-[9px] text-ink3 truncate max-w-[200px]">{d.source}</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <span
+                      className="px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider"
+                      style={{
+                        background: isCrawled ? 'rgba(45,212,191,0.15)' : 'rgba(245,200,66,0.15)',
+                        color: isCrawled ? 'var(--accent)' : 'var(--warning)',
+                      }}
+                    >
+                      {originLabel}
+                    </span>
                   </td>
                   <td className="px-3 py-3">
                     <span className="px-2 py-0.5 rounded bg-white/10 text-ink2 font-mono">{d.agent_id}</span>
@@ -1386,6 +1995,7 @@ function PreRAGSection({ docs: initialDocs }) {
                   </td>
                   <td className="px-3 py-3">
                     <button 
+                      type="button"
                       onClick={() => setSelectedDoc(d)}
                       className="px-2 py-1 rounded bg-[var(--accent)] text-white font-bold text-[9px] uppercase hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[var(--accent)]/20"
                     >
@@ -1395,14 +2005,13 @@ function PreRAGSection({ docs: initialDocs }) {
                 </tr>
               )
             })}
-            {(!report || report.length === 0) && (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-ink3 text-xs">No documents ingested yet. Upload documents or run a crawl.</td></tr>
+            {(!loading && (!report || report.length === 0)) && (
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-ink3 text-xs">No documents ingested yet. Upload documents or run a crawl.</td></tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* Detailed Report Modal */}
       {selectedDoc && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setSelectedDoc(null)} />
@@ -1414,9 +2023,9 @@ function PreRAGSection({ docs: initialDocs }) {
                 </h3>
                 <p className="text-xs text-ink3 font-medium mt-1 truncate max-w-md">{selectedDoc.title}</p>
               </div>
-              <button onClick={() => setSelectedDoc(null)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-ink3 hover:text-white transition-colors">✕</button>
+              <button type="button" onClick={() => setSelectedDoc(null)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-ink3 hover:text-white transition-colors">✕</button>
             </div>
-            
+
             <div className="p-8">
               <div className="grid lg:grid-cols-3 gap-8 mb-8">
                 <div className="lg:col-span-2 grid sm:grid-cols-2 gap-4">
@@ -1424,18 +2033,18 @@ function PreRAGSection({ docs: initialDocs }) {
                     <div className="text-[10px] font-black text-gold uppercase tracking-[0.2em] mb-4">Tier 1 Compliance</div>
                     <div className="text-3xl font-black text-white mb-1">{selectedDoc.tier1_score}<span className="text-sm text-ink3">/40</span></div>
                     <div className="h-1.5 bg-white/5 rounded-full overflow-hidden mt-3">
-                      <div className="h-full bg-gold rounded-full" style={{ width: `${(selectedDoc.tier1_score/40)*100}%` }} />
+                      <div className="h-full bg-gold rounded-full" style={{ width: `${(selectedDoc.tier1_score / 40) * 100}%` }} />
                     </div>
                   </div>
                   <div className="card p-5 bg-gradient-to-br from-silver/5 to-transparent border-silver/10">
                     <div className="text-[10px] font-black text-silver uppercase tracking-[0.2em] mb-4">Tier 2 Authority</div>
                     <div className="text-3xl font-black text-white mb-1">{selectedDoc.tier2_score}<span className="text-sm text-ink3">/60</span></div>
                     <div className="h-1.5 bg-white/5 rounded-full overflow-hidden mt-3">
-                      <div className="h-full bg-silver rounded-full" style={{ width: `${(selectedDoc.tier2_score/60)*100}%` }} />
+                      <div className="h-full bg-silver rounded-full" style={{ width: `${(selectedDoc.tier2_score / 60) * 100}%` }} />
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="card p-5 flex flex-col items-center justify-center text-center relative overflow-hidden group">
                   <div className="absolute inset-0 bg-gradient-to-br from-[var(--accent)]/10 to-transparent" />
                   <div className="relative z-10">
@@ -1448,40 +2057,35 @@ function PreRAGSection({ docs: initialDocs }) {
                 </div>
               </div>
 
-              <div className="grid lg:grid-cols-2 gap-8">
+              <div className="space-y-8">
                 <div>
-                  <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><TrendingUp size={16} className="text-gold" /> Dimension Breakdown</h4>
-                  <div className="space-y-4">
-                    <div className="space-y-3">
-                      <div className="text-[10px] font-black text-gold/60 uppercase tracking-widest">Tier 1 Guardrails</div>
-                      <div className="grid grid-cols-2 gap-3">
-                        {TIER1.map(g => {
-                          const score = selectedDoc.dim_scores?.[g.id] || 0;
-                          const pct = (score / g.max) * 100;
-                          return (
-                            <div key={g.id} className="p-3 rounded-xl bg-white/5 border border-white/5">
-                              <div className="flex justify-between items-center mb-2">
-                                <span className="text-[10px] font-bold text-ink2">{g.name}</span>
-                                <span className="text-[10px] font-mono font-bold text-gold">{score}/{g.max}</span>
-                              </div>
-                              <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                                <div className="h-full bg-gold/50 rounded-full transition-all duration-1000" style={{ width: `${pct}%` }} />
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
+                  <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-gold" /> Tier 1 — Guardrail checkpoints
+                  </h4>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {TIER1.map(g => renderDimCard(g, 'text-gold', 'bg-gold/50'))}
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-silver" /> Tier 2 — Evidence quality
+                  </h4>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {TIER2.map(d => renderDimCard(d, 'text-silver', 'bg-silver/50'))}
                   </div>
                 </div>
 
                 <div>
-                  <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><AlertCircle size={16} className="text-[var(--accent)]" /> Gap Analysis & Optimization</h4>
+                  <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                    <AlertCircle size={16} className="text-[var(--accent)]" /> Gap summary
+                  </h4>
                   <div className="card p-5 border-[var(--accent)]/20 bg-[var(--accent)]/5">
-                    <div className="text-[10px] font-black text-[var(--accent)] uppercase tracking-widest mb-4">Areas for Improvement</div>
-                    {selectedDoc.reject_reasons?.length > 0 ? (
+                    {Object.keys(selectedDoc.gap_reasons || {}).length > 0 || (selectedDoc.reject_reasons?.length > 0) ? (
                       <ul className="space-y-3">
-                        {selectedDoc.reject_reasons.map((reason, i) => (
+                        {(selectedDoc.reject_reasons?.length
+                          ? selectedDoc.reject_reasons
+                          : Object.values(selectedDoc.gap_reasons || {})
+                        ).map((reason, i) => (
                           <li key={i} className="flex gap-3 text-[11px] text-ink2 leading-relaxed">
                             <span className="text-[var(--accent)] mt-1 shrink-0">◆</span>
                             <span>{reason}</span>
@@ -1489,18 +2093,17 @@ function PreRAGSection({ docs: initialDocs }) {
                         ))}
                       </ul>
                     ) : (
-                      <div className="py-8 text-center">
-                        <CheckCircle size={32} className="text-[var(--accent)] mx-auto mb-3 opacity-50" />
-                        <p className="text-xs text-ink2">No critical gaps identified. Document meets GOLD standards.</p>
+                      <div className="py-6 text-center">
+                        <CheckCircle size={28} className="text-[var(--accent)] mx-auto mb-2 opacity-50" />
+                        <p className="text-xs text-ink2">No scoring gaps — all parameters at maximum.</p>
                       </div>
                     )}
-                    
-                    <div className="mt-8 p-4 rounded-xl bg-black/40 border border-white/5">
+                    <div className="mt-6 p-4 rounded-xl bg-black/40 border border-white/5">
                       <div className="text-[10px] font-black text-white/50 uppercase mb-2">Recommendation</div>
                       <p className="text-[11px] text-ink3 italic">
-                        {selectedDoc.prerag_score >= 85 
-                          ? "Document is fully optimized for specialist agents. No further action required."
-                          : "Recommended: Verify source authority and ensure all clinical metadata is present to elevate to GOLD tier."}
+                        {selectedDoc.prerag_score >= 85
+                          ? 'Document is fully optimized for specialist agents. No further action required.'
+                          : 'Verify source authority, metadata completeness, and text volume to elevate readiness tier.'}
                       </p>
                     </div>
                   </div>
@@ -1510,9 +2113,55 @@ function PreRAGSection({ docs: initialDocs }) {
           </div>
         </div>
       )}
+
     </div>
   )
 }
+
+const PRISM_MASTER_AGENTS = {
+  CA: [
+    { id: 'CA1', name: 'Cancer Screening & Early Detection Specialist' },
+    { id: 'CA2', name: 'Cancer Treatment Navigation Specialist' },
+    { id: 'CA3', name: 'Cancer Supportive Care & Symptom Management Specialist' },
+    { id: 'CA4', name: 'Cancer Survivorship & Long-Term Follow-Up Specialist' },
+    { id: 'CA5', name: 'Hereditary Cancer Genetics & Risk Assessment Specialist' },
+    { id: 'CA6', name: 'Cancer Care Holistic Navigator & General Assistance' },
+  ],
+  DM: [
+    { id: 'DM1', name: 'Glucose Monitoring & Diabetes Diagnostics Specialist' },
+    { id: 'DM2', name: 'Diabetes Medication & Insulin Management Specialist' },
+    { id: 'DM3', name: 'Diabetes Nutrition, Lifestyle & Weight Management Specialist' },
+    { id: 'DM4', name: 'Diabetes Complications Prevention & Management Specialist' },
+    { id: 'DM5', name: 'Gestational Diabetes & Special Populations Specialist' },
+    { id: 'DM6', name: 'Diabetes 360° Lifestyle & General Assistance Agent' },
+  ],
+  CV: [
+    { id: 'CV1', name: 'Cardiovascular Clinical Assessment Specialist' },
+    { id: 'CV2', name: 'Cardiac Emergency & Critical Care Response Specialist' },
+    { id: 'CV3', name: 'Cardiovascular Medications & Pharmacotherapy Specialist' },
+    { id: 'CV4', name: 'Cardiac Rehabilitation & Exercise Therapy Specialist' },
+    { id: 'CV5', name: 'Cardiac Nutrition, Prevention & Lifestyle Specialist' },
+    { id: 'CV6', name: 'Heart Health Wellness & General Cardiovascular Assistance' },
+  ],
+  MH: [
+    { id: 'MH1', name: 'Depression Assessment & Evidence-Based Support Specialist' },
+    { id: 'MH2', name: 'Anxiety Disorders & Evidence-Based Management Specialist' },
+    { id: 'MH3', name: 'Sleep, Wellness & Burnout Recovery Specialist' },
+    { id: 'MH4', name: 'Trauma, PTSD & Trauma-Informed Care Specialist' },
+    { id: 'MH5', name: 'Mental Health Crisis & Suicide Prevention Specialist' },
+    { id: 'MH6', name: 'Mental Well-being & General Psychological Assistance Agent' },
+  ],
+  RS: [
+    { id: 'RS1', name: 'Asthma Management & Inhaler Therapy Specialist' },
+    { id: 'RS2', name: 'COPD Management & Spirometry Interpretation Specialist' },
+    { id: 'RS3', name: 'Pulmonary Rehabilitation & Breathing Therapy Specialist' },
+    { id: 'RS4', name: 'Respiratory Medications & Inhaler Device Specialist' },
+    { id: 'RS5', name: 'Sleep-Disordered Breathing & OSA Management Specialist' },
+    { id: 'RS6', name: 'Lung Health & General Respiratory Assistance Specialist' },
+  ],
+}
+
+const PRISM_ALL_AGENTS = Object.values(PRISM_MASTER_AGENTS).flat()
 
 function UploadCrawl({ onIngestSuccess }) {
   const [crawlAgent, setCrawlAgent] = useState('DM1')
@@ -1532,8 +2181,6 @@ function UploadCrawl({ onIngestSuccess }) {
     },
     maxFiles: 1, onDrop: (f) => setFile(f[0]),
   })
-
-  const AGENTS = ['CA1','CA2','CA3','CA4','CA5','DM1','DM2','DM3','DM4','DM5','CV1','CV2','CV3','CV4','CV5','MH1','MH2','MH3','MH4','MH5','RS1','RS2','RS3','RS4','RS5']
 
   const handleUpload = async () => {
     if (!file) { toast.error('Select a file first'); return }
@@ -1557,10 +2204,10 @@ function UploadCrawl({ onIngestSuccess }) {
         chunks: data.chunks_added
       })
 
-      toast.success(`Document fully validated and stored in ${data.matched_agent} collection.`, { 
+      toast.success('Crawling completed', {
         duration: 5000,
         style: { background: '#0F172A', color: '#fff', border: '1px solid #34D399' }
-      });
+      })
 
       onIngestSuccess?.()
       setFile(null)
@@ -1614,9 +2261,9 @@ function UploadCrawl({ onIngestSuccess }) {
     try {
       const { data } = await api.post('/admin/crawl', { agent_id: crawlAgent, query: crawlQuery, source: crawlSrc, max_results: 10 })
       if (data.status === 'success') {
-        toast.success(`Crawl completed! ${data.added_count} medical documents indexed to ${crawlAgent}.`, { 
+        toast.success('Crawling completed', {
           id: tid,
-          duration: 6000,
+          duration: 5000,
           style: { background: '#0F172A', color: '#fff', border: '1px solid #34D399' }
         })
         onIngestSuccess?.()
@@ -1759,7 +2406,9 @@ function UploadCrawl({ onIngestSuccess }) {
             <div>
               <label className="text-[10px] font-mono text-ink3 uppercase mb-1 block">Agent Target</label>
               <select className="input w-full text-sm" value={crawlAgent} onChange={e => setCrawlAgent(e.target.value)}>
-                {AGENTS.map(a => <option key={a}>{a}</option>)}
+                {PRISM_ALL_AGENTS.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -1795,7 +2444,7 @@ function VectorStore({ data, meta, refreshing, onRefresh }) {
   const totalChunks = meta?.total_chunks ?? collections.reduce((s, c) => s + (c.document_count || 0), 0)
   const chromaTotal = meta?.total_chroma_chunks
   const updatedLabel = meta?.updated_at
-    ? new Date(meta.updated_at).toLocaleTimeString()
+    ? formatTime(meta.updated_at)
     : null
   const outOfSync = collections.filter(c => c.in_sync === false && (c.db_chunk_count || 0) > 0).length
 
@@ -2020,53 +2669,10 @@ function AgentPerformance({ ragas }) {
     { key: 'overall',           label: 'Overall RAGAS',     color: '#F472B6' },
   ]
 
-  const MASTER_AGENTS = {
-    CA: [
-      { id: 'CA1', name: "Cancer Screening & Early Detection Specialist" },
-      { id: 'CA2', name: "Cancer Treatment Navigation Specialist" },
-      { id: 'CA3', name: "Cancer Supportive Care & Symptom Management Specialist" },
-      { id: 'CA4', name: "Cancer Survivorship & Long-Term Follow-Up Specialist" },
-      { id: 'CA5', name: "Hereditary Cancer Genetics & Risk Assessment Specialist" },
-      { id: 'CA6', name: "Cancer Care Holistic Navigator & General Assistance" },
-    ],
-    DM: [
-      { id: 'DM1', name: "Glucose Monitoring & Diabetes Diagnostics Specialist" },
-      { id: 'DM2', name: "Diabetes Medication & Insulin Management Specialist" },
-      { id: 'DM3', name: "Diabetes Nutrition, Lifestyle & Weight Management Specialist" },
-      { id: 'DM4', name: "Diabetes Complications Prevention & Management Specialist" },
-      { id: 'DM5', name: "Gestational Diabetes & Special Populations Specialist" },
-      { id: 'DM6', name: "Diabetes 360° Lifestyle & General Assistance Agent" },
-    ],
-    CV: [
-      { id: 'CV1', name: "Cardiovascular Clinical Assessment Specialist" },
-      { id: 'CV2', name: "Cardiac Emergency & Critical Care Response Specialist" },
-      { id: 'CV3', name: "Cardiovascular Medications & Pharmacotherapy Specialist" },
-      { id: 'CV4', name: "Cardiac Rehabilitation & Exercise Therapy Specialist" },
-      { id: 'CV5', name: "Cardiac Nutrition, Prevention & Lifestyle Specialist" },
-      { id: 'CV6', name: "Heart Health Wellness & General Cardiovascular Assistance" },
-    ],
-    MH: [
-      { id: 'MH1', name: "Depression Assessment & Evidence-Based Support Specialist" },
-      { id: 'MH2', name: "Anxiety Disorders & Evidence-Based Management Specialist" },
-      { id: 'MH3', name: "Sleep, Wellness & Burnout Recovery Specialist" },
-      { id: 'MH4', name: "Trauma, PTSD & Trauma-Informed Care Specialist" },
-      { id: 'MH5', name: "Mental Health Crisis & Suicide Prevention Specialist" },
-      { id: 'MH6', name: "Mental Well-being & General Psychological Assistance Agent" },
-    ],
-    RS: [
-      { id: 'RS1', name: "Asthma Management & Inhaler Therapy Specialist" },
-      { id: 'RS2', name: "COPD Management & Spirometry Interpretation Specialist" },
-      { id: 'RS3', name: "Pulmonary Rehabilitation & Breathing Therapy Specialist" },
-      { id: 'RS4', name: "Respiratory Medications & Inhaler Device Specialist" },
-      { id: 'RS5', name: "Sleep-Disordered Breathing & OSA Management Specialist" },
-      { id: 'RS6', name: "Lung Health & General Respiratory Assistance Specialist" },
-    ]
-  };
-
   const aggMap = {}
 
   // Pre-initialize aggMap to ensure all agents are fully listed on X-Axis and Sidebar
-  const masterAgents = MASTER_AGENTS[selectedDisease] || []
+  const masterAgents = PRISM_MASTER_AGENTS[selectedDisease] || []
   masterAgents.forEach(a => {
     aggMap[a.id] = {
       key: a.id,
@@ -2386,8 +2992,8 @@ function LLMCallsSection({ data }) {
                   <td className="px-4 py-3 text-ink3 font-mono text-[10px]">
                     {c.created_at ? (
                       <>
-                        <span className="text-[var(--text-main)] font-bold">{new Date(c.created_at).toLocaleDateString()}</span>
-                        <span className="ml-2 opacity-50">{new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                        <span className="text-[var(--text-main)] font-bold">{formatDate(c.created_at)}</span>
+                        <span className="ml-2 opacity-50">{formatTime(c.created_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                       </>
                     ) : '—'}
                   </td>
@@ -2419,27 +3025,6 @@ function UserSpecificSection({ data }) {
   const totalPubMed = (data || []).reduce((acc, u) => acc + (u.pubmed_count || 0), 0)
   const totalLLM = (data || []).reduce((acc, u) => acc + (u.llm_count || 0), 0)
   const dbSuccessRate = totalQueries > 0 ? (((totalCDC + totalPubMed) / totalQueries) * 100).toFixed(1) : '0.0'
-
-  const formatRelativeTime = (isoString) => {
-    if (!isoString) return 'Never'
-    try {
-      const date = new Date(isoString)
-      const now = new Date()
-      const diffMs = now - date
-      const diffMins = Math.floor(diffMs / 60000)
-      const diffHours = Math.floor(diffMs / 3600000)
-      const diffDays = Math.floor(diffMs / 86400000)
-
-      if (diffMins < 1) return 'Just now'
-      if (diffMins < 60) return `${diffMins}m ago`
-      if (diffHours < 24) return `${diffHours}h ago`
-      if (diffDays === 1) return 'Yesterday'
-      if (diffDays < 7) return `${diffDays}d ago`
-      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-    } catch {
-      return '—'
-    }
-  }
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-6">
@@ -2555,7 +3140,7 @@ function UserSpecificSection({ data }) {
                     <td className="px-4 py-3 font-mono text-[10px] text-ink3">
                       <div className="flex flex-col">
                         <span className="font-bold text-[var(--text-main)]">{formatRelativeTime(u.last_login)}</span>
-                        {u.last_login && <span className="opacity-50 text-[9px] mt-0.5">{new Date(u.last_login).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                        {u.last_login && <span className="opacity-50 text-[9px] mt-0.5">{formatTime(u.last_login, { hour: '2-digit', minute: '2-digit' })}</span>}
                       </div>
                     </td>
                   </tr>
@@ -2604,9 +3189,9 @@ function UserSpecificSection({ data }) {
               <div className="bg-black/20 p-4 rounded-2xl border border-white/5">
                 <div className="text-[9px] text-[var(--text-dim)] font-bold uppercase tracking-wider mb-1">Last System Entry</div>
                 <div className="text-xs font-mono font-bold text-[var(--text-main)]">
-                  {selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleDateString() : 'Never'}
+                  {selectedUser.last_login ? formatDate(selectedUser.last_login) : 'Never'}
                 </div>
-                {selectedUser.last_login && <div className="text-[8px] text-[var(--text-dim)] font-mono mt-0.5">{new Date(selectedUser.last_login).toLocaleTimeString()}</div>}
+                {selectedUser.last_login && <div className="text-[8px] text-[var(--text-dim)] font-mono mt-0.5">{formatTime(selectedUser.last_login)}</div>}
               </div>
               <div className="bg-black/20 p-4 rounded-2xl border border-white/5">
                 <div className="text-[9px] text-[var(--text-dim)] font-bold uppercase tracking-wider mb-1">System Entries</div>
@@ -2747,10 +3332,11 @@ export default function AdminPortal() {
   const [vstoreMeta, setVstoreMeta] = useState(null)
   const [vstoreRefreshing, setVstoreRefreshing] = useState(false)
   const [feedback, setFb]     = useState([])
-  const [llmcalls, setLLMCalls] = useState([])
+  const [llmcalls, setLLMCalls] = useState(null)
   const [userQuerySources, setUserQuerySources] = useState([])
   const [sentiment, setSentiment] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [overviewError, setOverviewError] = useState(null)
 
   const applyVectorStorePayload = (payload) => {
     if (Array.isArray(payload)) {
@@ -2772,7 +3358,9 @@ export default function AdminPortal() {
     if (!quiet) setVstoreRefreshing(true)
     try {
       const { data } = await api.get('/admin/vector-store')
+      console.log(data)
       applyVectorStorePayload(data)
+      console.log('Hello')
     } catch (e) {
       if (e?.response?.status === 401) navigate('/login')
     } finally {
@@ -2797,7 +3385,14 @@ export default function AdminPortal() {
 
       const [ov, rg, dc, fb, al, vs, lc, uqs, st] = results;
 
-      if (ov.status === 'fulfilled') setOv(ov.value.data)
+      if (ov.status === 'fulfilled') {
+        setOv(ov.value.data)
+        setOverviewError(null)
+      } else {
+        const detail = ov.reason?.response?.data?.detail || ov.reason?.message || 'Overview API request failed'
+        setOverviewError(typeof detail === 'string' ? detail : 'Overview API request failed (timeout or server error)')
+        console.error('[Admin] overview load failed', ov.reason)
+      }
       if (rg.status === 'fulfilled') setRagas(rg.value.data)
       if (dc.status === 'fulfilled') setDocs(dc.value.data)
       if (fb.status === 'fulfilled') setFb(fb.value.data)
@@ -2841,10 +3436,10 @@ export default function AdminPortal() {
 
   const renderSection = () => {
     switch(active) {
-      case 'overview':    return <Overview data={overview} llmcalls={llmcalls} ragas={ragas} userQuerySources={userQuerySources} />
+      case 'overview':    return <Overview data={overview} llmcalls={llmcalls} ragas={ragas} userQuerySources={userQuerySources} loadError={overviewError} onRetry={loadAll} />
       case 'ragas':       return <RAGASSection data={ragas} />
       case 'responsible': return <ResponsibleAIScorecard />
-      case 'prerag':      return <PreRAGSection docs={docs} />
+      case 'prerag':      return <PreRAGSection />
       case 'documents':   return <Documents data={docs} />
       case 'upload':      return <UploadCrawl onIngestSuccess={loadVectorStore} />
       case 'vectorstore': return <VectorStore data={vstore} meta={vstoreMeta} refreshing={vstoreRefreshing} onRefresh={() => loadVectorStore(false)} />
@@ -2853,6 +3448,7 @@ export default function AdminPortal() {
       case 'patients':    return <ComingSoon title="Patient Management" sub="Real-time patient trajectory tracking and EHR synchronization is currently in development." />
       case 'agents':      return <AgentPerformance ragas={ragas} />
       case 'quality':     return <AdminQuality />
+      case 'recommend360': return <AdminRecommendation360 />
       case 'alerts':      return <Alerts data={alerts} onResolve={resolveAlert} />
       case 'routing':     return <AdminSmartRouting />
       case 'escalation':  return <AdminEscalationDashboard />
@@ -3139,7 +3735,7 @@ export function AdminEscalationDashboard() {
   const filtered = escalations
     .filter(e => {
       if (!e.last_escalation) return false;
-      const eventDate = new Date(e.last_escalation);
+      const eventDate = parseUtcDate(e.last_escalation);
       const now = new Date();
       const diffDays = (now - eventDate) / (1000 * 60 * 60 * 24);
       if (diffDays > daysFilter) return false;
@@ -3147,7 +3743,7 @@ export function AdminEscalationDashboard() {
       if (filter === "human")      return e.human_count > 0;
       return true;
     })
-    .sort((a, b) => new Date(b.last_escalation) - new Date(a.last_escalation));
+    .sort((a, b) => (parseUtcDate(b.last_escalation) || 0) - (parseUtcDate(a.last_escalation) || 0));
 
   return (
     <div>

@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import api from "../services/api";
-import { LogOut, User as UserIcon, Send, ChevronRight, Lock, MessageSquare, ExternalLink, Settings, Brain, Activity, RefreshCw, Plus, FileText, Download, Trash2 } from "lucide-react";
+import { LogOut, User as UserIcon, Send, ChevronRight, Lock, MessageSquare, ExternalLink, Brain, Activity, RefreshCw, Plus, FileText, Download, Trash2 } from "lucide-react";
 import ImageUpload, { ImageAnalysisMessage } from "../Components/ImageUpload";
 import VoiceChat, { VoiceMessage } from "../Components/VoiceChat";
 import LanguageSelector from "../Components/LanguageSelector";
@@ -153,6 +153,7 @@ export default function PatientApp() {
   const [dynamicQuestions, setDynamicQuestions]   = useState([]);
 
   const endRef = useRef(null);
+  const scrollTargetRef = useRef(null);
   const effectiveSubs = ['CA', 'DM', 'CV', 'MH', 'RS'];
 
   // Auto-select first agent if none selected
@@ -181,6 +182,21 @@ export default function PatientApp() {
 
   useEffect(() => {
     if (messages.length > 0) {
+      // Deep-link scroll from history topic table
+      if (scrollTargetRef.current) {
+        const targetId = scrollTargetRef.current;
+        scrollTargetRef.current = null;
+        setTimeout(() => {
+          const el = document.getElementById(`msg-${targetId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+          } else {
+            endRef.current?.scrollIntoView({ behavior: "smooth" });
+          }
+        }, 150);
+        return;
+      }
+
       const lastMsg = messages[messages.length - 1];
       // If it's a new assistant message, scroll to TOP of it
       if (lastMsg.role === "assistant" && !lastMsg.isRestored) {
@@ -192,16 +208,18 @@ export default function PatientApp() {
             endRef.current?.scrollIntoView({ behavior: "smooth" });
           }
         }, 100);
-      } else {
+      } else if (!scrollTargetRef.current) {
         // User message or restored session, scroll to bottom
         endRef.current?.scrollIntoView({ behavior: "smooth" });
       }
     }
   }, [messages]);
 
-  const handleRestoreConversation = useCallback((data) => {
+  const handleRestoreConversation = useCallback((data, options = {}) => {
     const { conversation, messages: histMessages } = data;
     if (!conversation) return;
+
+    const { scrollToMessageId } = options;
 
     const disease = DISEASES.find(d => d.code === conversation.disease_code);
     const agent   = disease?.agents.find(a => a.id === conversation.agent_id);
@@ -226,6 +244,10 @@ export default function PatientApp() {
       responseFormat:    m.response_format,
       intent:            m.intent,
     })));
+
+    if (scrollToMessageId) {
+      scrollTargetRef.current = scrollToMessageId;
+    }
 
     setIsHistoryHidden(conversation.is_hidden || false);
 
@@ -570,12 +592,6 @@ export default function PatientApp() {
                 🕐 History
               </button>
               <button 
-                onClick={() => navigate('/admin')}
-                style={{ background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.2)", padding: "6px 14px", borderRadius: 8, cursor: "pointer", color: "var(--accent)", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}
-              >
-                <Settings size={14} /> Admin Console
-              </button>
-              <button 
                 onClick={onLogout} 
                 title="Sign out"
                 style={{ background: "transparent", border: "none", padding: 8, cursor: "pointer", color: "#64748B", display: "flex", alignItems: "center" }}
@@ -652,9 +668,9 @@ export default function PatientApp() {
 
           {!isHistoryHidden && messages.map((m, idx) => (
             <div 
-              key={m.id} 
-              id={idx === messages.length - 1 ? "last-message" : undefined}
-              style={{ scrollMarginTop: "20px" }}
+              key={m.id || idx} 
+              id={m.id ? `msg-${m.id}` : (idx === messages.length - 1 ? "last-message" : undefined)}
+              style={{ scrollMarginTop: "80px" }}
             >
               {m.response_type === "image_analysis" ? (
                 <ImageAnalysisMessage 
@@ -962,13 +978,6 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
       <LanguageSelector value={lang} onChange={changeLang} compact={false} />
 
       <button 
-        onClick={() => navigate('/admin')}
-        style={{ background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.2)", padding: "6px 12px", borderRadius: 8, cursor: "pointer", color: "var(--accent)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginRight: 8 }}
-      >
-        <Settings size={14} /> Admin Console
-      </button>
-
-      <button 
         onClick={onLogout} 
         title="Sign out"
         style={{ background: "transparent", border: "none", padding: 8, cursor: "pointer", color: "#64748B" }}
@@ -1100,9 +1109,27 @@ function EmptyState({ onOpenHistory }) {
 
 // ─── Input Bar ─────────────────────────────────────────────────────────────────
 function InputBar({ input, setInput, loading, onSend, agentName, agentId, convId, language, onImageAnalysis, onVoiceMessage, diseaseColor, diseaseName, t }) {
+  const textareaRef = useRef(null);
+  const MAX_INPUT_HEIGHT = 132;
+  const hasText = input.trim().length > 0;
+
+  const adjustTextareaHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const scrollHeight = el.scrollHeight;
+    const nextHeight = Math.min(scrollHeight, MAX_INPUT_HEIGHT);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = scrollHeight > MAX_INPUT_HEIGHT ? "auto" : "hidden";
+  }, []);
+
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [input, adjustTextareaHeight]);
+
   return (
-    <div style={{ padding: "16px 20px", background: "var(--bg-card)", borderTop: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+    <div style={{ padding: "12px 20px 14px", background: "var(--bg-card)", borderTop: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
         <ImageUpload
           agentId={agentId}
           conversationId={convId}
@@ -1111,30 +1138,84 @@ function InputBar({ input, setInput, loading, onSend, agentName, agentId, convId
           diseaseColor={diseaseColor}
           diseaseName={diseaseName}
         />
-        <VoiceChat
-          agentId={agentId}
-          conversationId={convId}
-          language={language}
-          onMessageAdded={onVoiceMessage}
-          diseaseColor={diseaseColor}
-          diseaseName={diseaseName}
-        />
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
-          placeholder={t ? t.placeholder : `Ask ${agentName} specialist…`}
-          style={{ flex: 1, padding: "12px 16px", border: "1px solid var(--border)", background: "var(--bg-main)", borderRadius: 12, fontSize: 13, color: "var(--text-main)", fontFamily: "inherit", outline: "none" }}
-        />
+        <div
+          className="prism-input-field-wrap"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            background: "var(--bg-main)",
+          }}
+        >
+          <textarea
+            ref={textareaRef}
+            className="prism-chat-input"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onInput={adjustTextareaHeight}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSend();
+              }
+            }}
+            rows={1}
+            placeholder={t ? t.placeholder : `Ask ${agentName} specialist…`}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: hasText ? "12px 14px" : "12px 44px 12px 16px",
+              border: "none",
+              background: "transparent",
+              borderRadius: 12,
+              fontSize: 13,
+              color: "var(--text-main)",
+              fontFamily: "inherit",
+              outline: "none",
+              resize: "none",
+              minHeight: 44,
+              maxHeight: MAX_INPUT_HEIGHT,
+              overflowY: "hidden",
+              whiteSpace: "pre-wrap",
+              wordWrap: "break-word",
+              overflowWrap: "break-word",
+              lineHeight: 1.45,
+            }}
+          />
+          {!hasText && (
+            <VoiceChat
+              agentId={agentId}
+              conversationId={convId}
+              language={language}
+              onMessageAdded={onVoiceMessage}
+              diseaseColor={diseaseColor}
+              diseaseName={diseaseName}
+              embedded
+            />
+          )}
+        </div>
         <button
           disabled={loading || !input.trim()}
           onClick={() => onSend()}
-          style={{ flexShrink: 0, padding: "12px 24px", background: loading || !input.trim() ? "var(--border)" : "var(--accent)", color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: loading || !input.trim() ? "not-allowed" : "pointer", fontFamily: "inherit", transition: "all .2s ease" }}
+          style={{
+            flexShrink: 0,
+            padding: "12px 24px",
+            background: loading || !input.trim() ? "var(--border)" : "var(--accent)",
+            color: "#fff",
+            border: "none",
+            borderRadius: 12,
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: loading || !input.trim() ? "not-allowed" : "pointer",
+            fontFamily: "inherit",
+            transition: "all .2s ease",
+          }}
         >
           {t ? t.send : "Send"}
         </button>
       </div>
-      <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 6, textAlign: "center" }}>
+      <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 8, textAlign: "center" }}>
         ⚕ {t ? t.disclaimer : "Not a substitute for professional medical advice. Always consult your doctor."}
       </div>
     </div>

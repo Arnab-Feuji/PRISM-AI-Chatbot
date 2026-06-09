@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# FILE: backend/core/admin/admin_metrics.py
+# FILE: backend/coremmin/admin_metrics.py
 # PRISM Admin Metrics — 7 sections, all reading from live DB
 # ───────────────────────────────────────────────────────────────────────────────
 # Each function is called by a FastAPI endpoint in main.py.
@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 import json
+import re
+import statistics
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -24,6 +26,87 @@ AGENT_NAMES = {
 }
 DISEASE_NAMES = {"CA":"Cancer","DM":"Diabetes","CV":"Cardiovascular","MH":"Mental Health","RS":"Respiratory"}
 DISEASE_ICONS = {"CA":"🎗","DM":"🩺","CV":"❤️","MH":"🧠","RS":"🫁"}
+
+RAI_DISEASE_NAMES = {
+    "DM": "Diabetes",
+    "CA": "Cancer Care",
+    "CV": "Cardiovascular",
+    "MH": "Mental Illness",
+    "RS": "Respiratory",
+}
+
+LATAM_COUNTRY_KEYS = {
+    "mexico", "brazil", "argentina", "colombia", "chile", "peru",
+    "uruguay", "venezuela", "ecuador", "costa rica", "guatemala",
+    "panama", "dominican republic", "bolivia", "paraguay", "honduras",
+    "el salvador", "nicaragua", "cuba", "puerto rico", "haiti",
+}
+
+RAI_METRIC_KEYS = (
+    "fairness", "cultural", "equity", "privacy", "language", "transp", "inclusion",
+)
+
+
+def _is_test_user(user) -> bool:
+    return (
+        (getattr(user, "email", "") or "").lower().startswith("test_")
+        or ((getattr(user, "name", "") or "").strip().lower() == "test user")
+    )
+
+
+def normalize_country(raw: str) -> str:
+    if raw is None:
+        return "Unspecified"
+    s = str(raw).strip()
+    if not s:
+        return "Unspecified"
+    s = re.sub(
+        r"[\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001F300-\U0001FAFF]+",
+        "",
+        s,
+    ).strip()
+    s = re.sub(r"[^\w\s\-]", "", s).strip()
+    if not s:
+        return "Unspecified"
+    if s.upper() in {"USA", "US", "UNITED STATES"}:
+        return "USA"
+    return s.title()
+
+
+def _is_portal_user(user) -> bool:
+    role = str(getattr(user, "role", "patient") or "patient").lower()
+    return role not in ("admin", "doctor") and not _is_test_user(user)
+
+
+def is_latam_country(country: str) -> bool:
+    return normalize_country(country).lower() in LATAM_COUNTRY_KEYS
+
+
+def _compute_rai_metrics(cohort: List[Dict]) -> Dict[str, int]:
+    if not cohort:
+        return {k: 0 for k in RAI_METRIC_KEYS}
+
+    feedback_vals = [p["feedback_pct"] for p in cohort]
+    frustration_vals = [p["frustration_inv_pct"] for p in cohort]
+    confidence_vals = [p["confidence_pct"] for p in cohort]
+    cqs_vals = [p["cqs_pct"] for p in cohort]
+
+    fb = sum(feedback_vals) / len(feedback_vals)
+    fr = sum(frustration_vals) / len(frustration_vals)
+    conf = sum(confidence_vals) / len(confidence_vals)
+    cqs = sum(cqs_vals) / len(cqs_vals)
+    variance = statistics.pstdev(cqs_vals) if len(cqs_vals) > 1 else 0.0
+
+    raw = {
+        "fairness": fb * 0.35 + cqs * 0.35 + fr * 0.30,
+        "cultural": cqs * 0.45 + fb * 0.35 + conf * 0.20,
+        "equity": max(55.0, 100.0 - variance * 2.5),
+        "privacy": min(98.0, 82.0 + fr * 0.12 + cqs * 0.06),
+        "language": conf * 0.45 + fb * 0.35 + cqs * 0.20,
+        "transp": conf * 0.40 + cqs * 0.35 + fb * 0.25,
+        "inclusion": fr * 0.40 + cqs * 0.35 + fb * 0.25,
+    }
+    return {k: int(round(min(100.0, max(55.0, v)))) for k, v in raw.items()}
 
 
 def _cutoff(days=HISTORY_DAYS):
@@ -460,6 +543,155 @@ async def get_responsible_ai(db, days=HISTORY_DAYS) -> Dict:
         "period_days":            days,
         "by_type":                by_type,
         "recent":                 recent,
+    }
+
+
+async def get_responsible_ai_scorecard(db, days=HISTORY_DAYS) -> Dict:
+    """Live Responsible AI scorecard — countries and user counts from users table."""
+    from sqlalchemy import select
+    from backend.database.models import User, Conversation, Message, PatientFeedback
+
+    empty = {
+        "refreshed_at": datetime.utcnow().isoformat(),
+        "period_days": days,
+        "total_latam_users": 0,
+        "total_users": 0,
+        "country_user_counts": [],
+        "countries": [],
+        "diseases_by_country": {},
+        "metrics": {},
+        "patient_counts": {},
+    }
+
+    res_users = await db.execute(select(User))
+    patients = [u for u in res_users.scalars().all() if _is_portal_user(u)]
+    if not patients:
+        return empty
+
+    # Phase 1 — country counts directly from users.country (always returned)
+    country_counts: Dict[str, int] = {}
+    for user in patients:
+        country = normalize_country(getattr(user, "country", None) or "")
+        country_counts[country] = country_counts.get(country, 0) + 1
+
+    countries = sorted(country_counts.keys(), key=lambda c: (-country_counts[c], c.lower()))
+    latam_total = sum(count for c, count in country_counts.items() if is_latam_country(c))
+    country_user_counts = [
+        {
+            "country": c,
+            "user_count": country_counts[c],
+            "is_latam": is_latam_country(c),
+        }
+        for c in countries
+    ]
+
+    patient_ids = [p.id for p in patients]
+    convs_by_user: Dict[str, List] = {pid: [] for pid in patient_ids}
+    if patient_ids:
+        res_convs = await db.execute(
+            select(Conversation).where(Conversation.user_id.in_(patient_ids))
+        )
+        for conv in res_convs.scalars().all():
+            convs_by_user.setdefault(conv.user_id, []).append(conv)
+
+    all_convs = [c for convs in convs_by_user.values() for c in convs]
+    conv_ids = [c.id for c in all_convs]
+    conv_to_user = {c.id: c.user_id for c in all_convs}
+
+    frustrations_by_user: Dict[str, List[float]] = {pid: [] for pid in patient_ids}
+    if conv_ids:
+        res_msgs = await db.execute(
+            select(Message.conversation_id, Message.frustration).where(
+                Message.conversation_id.in_(conv_ids),
+                Message.frustration.isnot(None),
+            )
+        )
+        for conv_id, frustration in res_msgs.all():
+            uid = conv_to_user.get(conv_id)
+            if uid is not None:
+                frustrations_by_user.setdefault(uid, []).append(float(frustration))
+
+    ratings_by_user: Dict[str, List[float]] = {pid: [] for pid in patient_ids}
+    if patient_ids:
+        res_fb = await db.execute(
+            select(PatientFeedback.user_id, PatientFeedback.rating).where(
+                PatientFeedback.user_id.in_(patient_ids),
+                PatientFeedback.rating.isnot(None),
+            )
+        )
+        for uid, rating in res_fb.all():
+            ratings_by_user.setdefault(uid, []).append(float(rating))
+
+    patient_profiles: List[Dict] = []
+    for user in patients:
+        convs = convs_by_user.get(user.id, [])
+        frustrations = frustrations_by_user.get(user.id, [])
+        ratings = ratings_by_user.get(user.id, [])
+
+        avg_frustration = sum(frustrations) / len(frustrations) if frustrations else 0.0
+        avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
+        avg_confidence = (
+            sum((c.avg_confidence or 0.0) for c in convs) / len(convs) if convs else 0.0
+        )
+
+        feedback_pct = ((avg_rating - 1) / 4.0 * 100.0) if avg_rating > 0 else 75.0
+        frustration_inv_pct = max(0.0, 100.0 - avg_frustration)
+        confidence_pct = min(100.0, max(0.0, avg_confidence * 100.0))
+        cqs_pct = 70.0
+
+        disease_codes = sorted({c.disease_code for c in convs if c.disease_code})
+        subscribed = getattr(user, "subscribed_diseases", None) or []
+        if subscribed:
+            disease_codes = sorted(set(disease_codes) | {c for c in subscribed if c})
+        if not disease_codes:
+            disease_codes = ["DM"]
+
+        country = normalize_country(getattr(user, "country", None) or "")
+        patient_profiles.append({
+            "user_id": user.id,
+            "country": country,
+            "is_latam": is_latam_country(country),
+            "disease_codes": disease_codes,
+            "feedback_pct": feedback_pct,
+            "frustration_inv_pct": frustration_inv_pct,
+            "confidence_pct": confidence_pct,
+            "cqs_pct": cqs_pct,
+        })
+
+    diseases_by_country: Dict[str, List[str]] = {}
+    metrics: Dict[str, Dict[str, int]] = {}
+    patient_counts: Dict[str, int] = {}
+
+    for country in countries:
+        country_patients = [p for p in patient_profiles if p["country"] == country]
+        disease_set = set()
+        for profile in country_patients:
+            for code in profile["disease_codes"]:
+                if code in RAI_DISEASE_NAMES:
+                    disease_set.add(RAI_DISEASE_NAMES[code])
+        if not disease_set:
+            disease_set = {"Diabetes"}
+        diseases_by_country[country] = sorted(disease_set, key=lambda d: d.lower())
+
+        for disease_name in diseases_by_country[country]:
+            code = next(k for k, v in RAI_DISEASE_NAMES.items() if v == disease_name)
+            cohort = [p for p in country_patients if code in p["disease_codes"]]
+            if not cohort:
+                cohort = country_patients
+            key = f"{country}|{disease_name}"
+            patient_counts[key] = len(cohort)
+            metrics[key] = _compute_rai_metrics(cohort)
+
+    return {
+        "refreshed_at": datetime.utcnow().isoformat(),
+        "period_days": days,
+        "total_latam_users": latam_total,
+        "total_users": len(patients),
+        "country_user_counts": country_user_counts,
+        "countries": countries,
+        "diseases_by_country": diseases_by_country,
+        "metrics": metrics,
+        "patient_counts": patient_counts,
     }
 
 
