@@ -15,6 +15,7 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+from chromadb.errors import InvalidDimensionException
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
 from backend.config.settings import get_settings
@@ -193,6 +194,8 @@ class PRISMChunker:
             # Layer 5: Extract topic and build semantic header
             topic = self._extract_topic(seg)
             enriched_meta = {**base_meta, "chunk_pos": i, "chunk_total": len(final)}
+            if base_meta.get("title"):
+                enriched_meta["title"] = base_meta["title"]
             if topic:
                 enriched_meta["topic"] = topic
 
@@ -230,24 +233,74 @@ class PRISMVectorStore:
             )
         return self._cols[name]
 
-    def add(self, chunks: List[Chunk], collection: str) -> int:
+    @staticmethod
+    def _collection_embed_dim(col: chromadb.Collection) -> Optional[int]:
+        """Return embedding width of an existing collection, or None if empty."""
+        if col.count() == 0:
+            return None
+        sample = col.get(limit=1, include=["embeddings"])
+        embs = sample.get("embeddings")
+        if embs is None or len(embs) == 0 or embs[0] is None:
+            return None
+        return len(embs[0])
+
+    def _recreate_collection_if_dim_mismatch(
+        self, collection: str, expected_dim: int
+    ) -> chromadb.Collection:
+        """Drop collections indexed with Chroma's default 384-dim model (legacy)."""
         col = self._get_col(collection)
+        existing_dim = self._collection_embed_dim(col)
+        if existing_dim is not None and existing_dim != expected_dim:
+            print(
+                f"[CHROMA_WARNING] Collection '{collection}' uses {existing_dim}-dim "
+                f"embeddings; BGE expects {expected_dim}-dim. Recreating collection."
+            )
+            self.delete_collection(collection)
+            col = self._get_col(collection)
+        return col
+
+    def add(self, chunks: List[Chunk], collection: str) -> Tuple[int, int]:
+        """Returns (chunks_added_to_chroma, embedding_dim)."""
         emb = get_embedder()
         texts = [c.text for c in chunks]
         vectors = emb.encode(texts, show_progress_bar=False).tolist()
-        existing = set(col.get(ids=[c.chunk_id for c in chunks])["ids"])
-        new = [(c, v) for c, v in zip(chunks, vectors) if c.chunk_id not in existing]
-        if not new: return 0
-        col.add(
-            ids=[c.chunk_id for c, _ in new],
-            documents=[c.text for c, _ in new],
-            embeddings=[v for _, v in new],
-            metadatas=[c.metadata for c, _ in new],
-        )
+        if not vectors:
+            return 0, 0
+
+        expected_dim = len(vectors[0])
+        col = self._recreate_collection_if_dim_mismatch(collection, expected_dim)
+
+        # Deduplicate chunks within this batch (overlap windows can hash to same id)
+        unique: Dict[str, Tuple[Chunk, List[float]]] = {}
+        for c, v in zip(chunks, vectors):
+            unique.setdefault(c.chunk_id, (c, v))
+        pairs = list(unique.values())
+
+        existing = set(col.get(ids=list(unique.keys()))["ids"])
+        new = [(c, v) for c, v in pairs if c.chunk_id not in existing]
+        if not new:
+            return 0, expected_dim
+
+        ids = [c.chunk_id for c, _ in new]
+        documents = [c.text for c, _ in new]
+        embeddings = [v for _, v in new]
+        metadatas = [c.metadata for c, _ in new]
+
+        try:
+            col.add(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
+        except InvalidDimensionException:
+            print(
+                f"[CHROMA_WARNING] Dimension mismatch on add for '{collection}'. "
+                f"Recreating collection and retrying."
+            )
+            self.delete_collection(collection)
+            col = self._get_col(collection)
+            col.add(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
+
         # Invalidate caches so admin vector-store counts refresh immediately
         self._bm25_cache.pop(collection, None)
         self._cols.pop(collection, None)
-        return len(new)
+        return len(new), expected_dim
 
     def query(self, query: str, collection: str, top_k: int = 10) -> List[Dict]:
         col = self._get_col(collection)
@@ -368,9 +421,18 @@ class PRISMVectorStore:
             return 0
 
     def delete_collection(self, collection: str):
-        self.client.delete_collection(collection)
+        import gc
         self._cols.pop(collection, None)
         self._bm25_cache.pop(collection, None)
+        gc.collect()
+        try:
+            self.client.delete_collection(collection)
+        except PermissionError as e:
+            raise PermissionError(
+                f"Could not delete Chroma collection '{collection}'. "
+                "Stop the PRISM backend and any crawl process, then retry. "
+                "If the project lives in OneDrive, pause sync or move data/chroma_db outside OneDrive."
+            ) from e
 
 
 # ── Reranker ──────────────────────────────────────────────────────────────
@@ -393,10 +455,20 @@ class PRISMRAGPipeline:
         self.store    = PRISMVectorStore()
         self.reranker = PRISMReranker()
 
-    def ingest(self, text: str, metadata: Dict, collection: str) -> Dict:
+    def ingest(self, text: str, metadata: Dict, collection: str,
+               indexed_document_id: Optional[str] = None) -> Dict:
         chunks = self.chunker.chunk(text, metadata)
-        added  = self.store.add(chunks, collection)
-        return {"chunks_created": len(chunks), "chunks_added": added, "collection": collection}
+        added, embed_dim = self.store.add(chunks, collection)
+        result = {
+            "chunks_created": len(chunks),
+            "chunks_added": added,
+            "collection": collection,
+            "embedding_dim": embed_dim,
+        }
+        if added or chunks:
+            from backend.database.chroma_registry import schedule_collection_sync
+            schedule_collection_sync(collection)
+        return result
 
     def retrieve(self, query: str, collection: str,
                  top_k_initial: int = 10, top_k_final: int = 5) -> List[Dict]:

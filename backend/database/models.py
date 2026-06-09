@@ -76,7 +76,11 @@ class Message(Base):
     multimodal_type: Mapped[str]  = mapped_column(String(20), nullable=True)  # image/audio/text
     processing_ms:  Mapped[int]   = mapped_column(Integer, default=0)
     is_clarifying_question: Mapped[bool] = mapped_column(Boolean, default=False)
-    
+    chroma_grounded:        Mapped[bool] = mapped_column(Boolean, default=False)
+    llm_fallback:           Mapped[bool] = mapped_column(Boolean, default=False)
+    response_source:        Mapped[str]  = mapped_column(String(20), nullable=True)
+    retrieval_detail:       Mapped[dict]  = mapped_column(JSON, default=dict)
+
     # 🆕 Conversational Engine metadata
     follow_up_questions: Mapped[list] = mapped_column(JSON, default=list)
     follow_up_prompt:    Mapped[str]  = mapped_column(Text, nullable=True)
@@ -218,6 +222,7 @@ class PreRAGResult(Base):
     quality_standard: Mapped[str] = mapped_column(String(30))
     auto_rejected:  Mapped[bool]  = mapped_column(Boolean, default=False)
     reject_reasons: Mapped[list]  = mapped_column(JSON, default=list)
+    gap_reasons:    Mapped[dict]  = mapped_column(JSON, default=dict)
     dim_scores:     Mapped[dict]  = mapped_column(JSON, default=dict)
     latam_countries: Mapped[list] = mapped_column(JSON, default=list)
     pii_masked:     Mapped[int]   = mapped_column(Integer, default=0)
@@ -263,6 +268,24 @@ class VideoGeneration(Base):
     created_at:     Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ChromaCollection(Base):
+    """
+    One row per ChromaDB collection: name, chunk count, chunk id list, embedding model.
+    Updated on ingest and startup sync from live Chroma.
+    """
+    __tablename__ = "chroma_collections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    collection_name: Mapped[str] = mapped_column(String(150), unique=True, nullable=False, index=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_ids: Mapped[list] = mapped_column(JSON, default=list)
+    embedding_model: Mapped[str] = mapped_column(String(120), default="BAAI/bge-base-en-v1.5")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class AgentQuestion(Base):
     __tablename__ = "agent_questions"
     id:             Mapped[str]   = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -298,6 +321,7 @@ async def create_tables():
             ("feedback tags", "ALTER TABLE patient_feedback ADD COLUMN IF NOT EXISTS tags JSON DEFAULT '[]'"),
             ("indexed_documents prerag_score", "ALTER TABLE indexed_documents ADD COLUMN IF NOT EXISTS prerag_score FLOAT DEFAULT 0.0"),
             ("indexed_documents prerag_tier", "ALTER TABLE indexed_documents ADD COLUMN IF NOT EXISTS prerag_tier VARCHAR(30) DEFAULT 'PENDING'"),
+            ("prerag_results gap_reasons", "ALTER TABLE prerag_results ADD COLUMN IF NOT EXISTS gap_reasons JSON DEFAULT '{}'::json"),
             
             ("ragas_metrics confidence", "ALTER TABLE ragas_metrics ADD COLUMN IF NOT EXISTS confidence FLOAT DEFAULT 0.0"),
             ("ragas_metrics frustration", "ALTER TABLE ragas_metrics ADD COLUMN IF NOT EXISTS frustration INTEGER DEFAULT 0"),
@@ -329,12 +353,57 @@ async def create_tables():
             ("message intent", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS intent VARCHAR(50) NULL"),
             ("message generic_support", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS generic_support JSON DEFAULT '[]'"),
             ("message visual_payload", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS visual_payload JSON DEFAULT '{}'::json"),
-            
+            ("message chroma_grounded", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS chroma_grounded BOOLEAN DEFAULT FALSE"),
+            ("message llm_fallback", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS llm_fallback BOOLEAN DEFAULT FALSE"),
+            ("message response_source", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS response_source VARCHAR(20) NULL"),
+            ("message retrieval_detail", "ALTER TABLE messages ADD COLUMN IF NOT EXISTS retrieval_detail JSON DEFAULT '{}'::json"),
+            ("message remap chroma to cdc_pubmed",
+             "UPDATE messages SET response_source = 'cdc_pubmed' WHERE response_source = 'chroma'"),
+            ("message source clarifying",
+             "UPDATE messages SET response_source = 'clarifying', chroma_grounded = FALSE, llm_fallback = FALSE "
+             "WHERE role = 'assistant' AND COALESCE(is_clarifying_question, FALSE) = TRUE"),
+            ("message source multimodal",
+             "UPDATE messages SET response_source = 'multimodal', chroma_grounded = FALSE, llm_fallback = FALSE "
+             "WHERE role = 'assistant' AND multimodal_type IS NOT NULL "
+             "AND COALESCE(is_clarifying_question, FALSE) = FALSE "
+             "AND (response_source IS NULL OR response_source = '')"),
+            ("message source cdc_pubmed",
+             "UPDATE messages SET response_source = 'cdc_pubmed', chroma_grounded = TRUE, llm_fallback = FALSE "
+             "WHERE role = 'assistant' AND COALESCE(is_clarifying_question, FALSE) = FALSE "
+             "AND multimodal_type IS NULL "
+             "AND (response_source IN ('chroma', 'cdc_pubmed') "
+             "     OR COALESCE(chroma_grounded, FALSE) = TRUE "
+             "     OR (citations IS NOT NULL AND citations::text NOT IN ('[]', 'null', '{}')))"),
+            ("message source llm_fallback",
+             "UPDATE messages SET response_source = 'llm_fallback', chroma_grounded = FALSE, llm_fallback = TRUE "
+             "WHERE role = 'assistant' AND COALESCE(is_clarifying_question, FALSE) = FALSE "
+             "AND multimodal_type IS NULL AND response_format IS NOT NULL "
+             "AND (response_source IS NULL OR response_source = '')"),
+            ("message source legacy",
+             "UPDATE messages SET response_source = 'legacy', chroma_grounded = FALSE, llm_fallback = FALSE "
+             "WHERE role = 'assistant' AND (response_source IS NULL OR response_source = '')"),
+            ("message fix both true",
+             "UPDATE messages SET chroma_grounded = TRUE, llm_fallback = FALSE, response_source = 'cdc_pubmed' "
+             "WHERE role = 'assistant' AND chroma_grounded = TRUE AND llm_fallback = TRUE"),
+
             ("image_upload image_url", "ALTER TABLE image_uploads ADD COLUMN IF NOT EXISTS image_url VARCHAR(2000) NULL"),
             ("image_upload intent_id", "ALTER TABLE image_uploads ADD COLUMN IF NOT EXISTS intent_id VARCHAR(100) NULL"),
             ("image_upload prompt", "ALTER TABLE image_uploads ADD COLUMN IF NOT EXISTS prompt TEXT NULL"),
             ("image_upload provider", "ALTER TABLE image_uploads ADD COLUMN IF NOT EXISTS provider VARCHAR(50) NULL"),
             
+            ("chroma_collections drop legacy registry",
+             "DROP TABLE IF EXISTS chroma_vector_registry CASCADE"),
+            ("chroma_collections table",
+             "CREATE TABLE IF NOT EXISTS chroma_collections ("
+             "  id VARCHAR(36) PRIMARY KEY, "
+             "  collection_name VARCHAR(150) NOT NULL UNIQUE, "
+             "  chunk_count INTEGER NOT NULL DEFAULT 0, "
+             "  chunk_ids JSON NOT NULL DEFAULT '[]', "
+             "  embedding_model VARCHAR(120) DEFAULT 'BAAI/bge-base-en-v1.5', "
+             "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+             "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+             ")"),
+
             ("video_generations table", 
              "CREATE TABLE IF NOT EXISTS video_generations ("
              "  id VARCHAR(36) PRIMARY KEY, "

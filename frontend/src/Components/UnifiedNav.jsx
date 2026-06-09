@@ -9,8 +9,12 @@ export default function UnifiedNav() {
   const navigate = useNavigate();
   
   const isAdmin = location.pathname.startsWith('/admin');
-  const isPatient = location.pathname.startsWith('/app') || location.pathname.startsWith('/plans') || location.pathname.startsWith('/checkout') || location.pathname.startsWith('/patient') || location.pathname.startsWith('/dashboard');
   const isHome = location.pathname === '/';
+  const loginRole = new URLSearchParams(location.search).get('role');
+  const isAdminPortal =
+    location.pathname.startsWith('/admin') ||
+    location.pathname === '/admin-intro' ||
+    (location.pathname === '/login' && loginRole === 'admin');
 
   const navBg = 'bg-[var(--bg-card)]';
   const accentColor = 'text-[var(--accent)]';
@@ -31,8 +35,7 @@ export default function UnifiedNav() {
       </div>
 
       <div className="flex items-center gap-4">
-        {/* Portal switcher — Admin Console only (Patient Portal link removed from admin) */}
-        {user?.role === 'admin' && !isAdmin && (
+        {user?.role === 'admin' && isAdminPortal && (
           <button 
             onClick={() => navigate('/admin')}
             className="flex items-center gap-2 px-4 py-1.5 rounded-full border border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 text-xs font-semibold transition-all"

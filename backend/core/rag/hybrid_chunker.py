@@ -334,6 +334,13 @@ class HybridChunker:
             )
             batches += 1
 
+        coll_name = getattr(collection, "name", str(collection))
+        try:
+            from backend.database.chroma_registry import schedule_collection_sync
+            schedule_collection_sync(coll_name)
+        except Exception as e:
+            print(f"[CHROMA_REGISTRY_WARNING] Could not update registry for {coll_name}: {e}")
+
         return {
             "children_indexed": len(result.children),
             "parents_stored":   len(result.parents),

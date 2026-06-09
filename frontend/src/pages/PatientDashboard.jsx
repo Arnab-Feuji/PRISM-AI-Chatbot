@@ -1,17 +1,37 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, Brain, Heart, Zap, Shield, Plus, MessageCircle, ChevronRight, TrendingUp } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
+import { formatHeaderDate, formatShortDate, getTimeGreeting } from '../utils/datetime';
 
 export default function PatientDashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
 
+  const { trialDaysLeft, trialEndLabel, nextBillingLabel, renewedLabel, labReportLabel } = useMemo(() => {
+    const now = new Date();
+    const trialEnd = new Date(now);
+    trialEnd.setDate(trialEnd.getDate() + 5);
+    const nextBilling = new Date(now);
+    nextBilling.setMonth(nextBilling.getMonth() + 1);
+    const renewed = new Date(now);
+    renewed.setDate(renewed.getDate() - 18);
+    const labReport = new Date(now);
+    labReport.setDate(labReport.getDate() - 3);
+    return {
+      trialDaysLeft: 5,
+      trialEndLabel: formatShortDate(trialEnd),
+      nextBillingLabel: formatShortDate(nextBilling),
+      renewedLabel: formatShortDate(renewed),
+      labReportLabel: formatShortDate(labReport),
+    };
+  }, []);
+
   const stats = [
     { label: 'Active Care Plans', value: '2', detail: '↑ Diabetes + Cardiovascular', color: 'text-[var(--accent)]' },
     { label: 'Specialist Agents', value: '10', detail: 'DM1–DM5 · CV1–CV5', color: 'text-[var(--accent)]' },
     { label: 'Conversations', value: '47', detail: 'This month', color: 'text-[var(--success)]' },
-    { label: 'Days until billing', value: '5', detail: 'Trial ends May 1, 2026', color: 'text-[var(--error)]' },
+    { label: 'Days until billing', value: String(trialDaysLeft), detail: `Trial ends ${trialEndLabel}`, color: 'text-[var(--error)]' },
   ];
 
   const subs = user?.subscribed_diseases || [];
@@ -34,7 +54,7 @@ export default function PatientDashboard() {
       agents: meta.agents,
       agentsMeta: meta.meta,
       status: 'Active',
-      renewDate: 'Next billing: Jun 21',
+      renewDate: `Next billing: ${nextBillingLabel}`,
       price: meta.price
     };
   }).filter(Boolean);
@@ -48,7 +68,7 @@ export default function PatientDashboard() {
       agents: ['CA1','CA2','CA3','CA4','CA5'],
       agentsMeta: ['Screening','Treatment','Support','Survivorship','Genetics'],
       status: 'Trial — 7 days left',
-      renewDate: 'Renewed May 21',
+      renewDate: `Renewed ${renewedLabel}`,
       price: 39
     }
   ];
@@ -68,8 +88,8 @@ export default function PatientDashboard() {
         {/* Top Bar */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-black text-[var(--text-main)] mb-1 tracking-tight">Good morning, <span className="text-[var(--accent)]">{user?.name || 'María'}</span> 👋</h1>
-            <p className="text-sm font-medium text-[var(--text-dim)]">Wednesday, May 6, 2026 · Your agents are active</p>
+            <h1 className="text-3xl font-black text-[var(--text-main)] mb-1 tracking-tight">{getTimeGreeting()}, <span className="text-[var(--accent)]">{user?.name || 'María'}</span> 👋</h1>
+            <p className="text-sm font-medium text-[var(--text-dim)]">{formatHeaderDate()} · Your agents are active</p>
           </div>
           <button 
             onClick={() => navigate('/plans')}
@@ -167,7 +187,7 @@ export default function PatientDashboard() {
                 {[
                   { type: 'AI Insight', msg: 'New research on Metformin usage...', time: '2h ago' },
                   { type: 'Medication', msg: 'Dosage updated for CA-2 agent', time: '1d ago' },
-                  { type: 'Report', msg: 'Lab results from Apr 24 processed', time: '3d ago' },
+                  { type: 'Report', msg: `Lab results from ${labReportLabel} processed`, time: '3d ago' },
                 ].map((act, i) => (
                   <div key={i} className="p-4 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-between group cursor-pointer hover:border-orange-500/50 transition-all">
                     <div className="space-y-0.5">

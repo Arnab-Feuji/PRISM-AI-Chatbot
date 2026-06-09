@@ -8,14 +8,134 @@ Starts:
   - React patient UI on http://localhost:5173 (npm run dev)
   - React admin  UI  on http://localhost:5174 (npm run admin)
 """
-import subprocess, sys, os, time, signal, threading
+import subprocess, sys, os, time, signal, threading, urllib.request
 from pathlib import Path
 
 ROOT    = Path(__file__).parent
 BACKEND = ROOT / "backend"
 FRONTEND= ROOT / "frontend"
+VENV_PY = ROOT / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+PYTHON  = str(VENV_PY) if VENV_PY.exists() else sys.executable
+
+# Ports PRISM expects — stale dev servers often leave these occupied
+PRISM_PORTS = [8000, 5177, 5178]
 
 processes = []
+
+# On Windows, isolate child processes so uvicorn reload events do not
+# propagate Ctrl+C / console signals to this launcher process.
+if sys.platform == "win32":
+    SUBPROCESS_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+else:
+    SUBPROCESS_FLAGS = 0
+
+
+def popen_kwargs():
+    kwargs = {}
+    if SUBPROCESS_FLAGS:
+        kwargs["creationflags"] = SUBPROCESS_FLAGS
+    return kwargs
+
+
+def _pids_on_port(port: int) -> set:
+    """Return PIDs listening on a TCP port (Windows)."""
+    pids = set()
+    if sys.platform == "win32":
+        try:
+            out = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f"(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue).OwningProcess",
+                ],
+                capture_output=True, text=True, check=False,
+            )
+            for line in out.stdout.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    pids.add(line)
+            if pids:
+                return pids
+        except Exception:
+            pass
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, check=False, shell=True,
+        )
+        needle = f":{port} "
+        for line in out.stdout.splitlines():
+            if "LISTENING" in line and needle in line:
+                parts = line.split()
+                if parts and parts[-1].isdigit():
+                    pids.add(parts[-1])
+    except Exception:
+        pass
+    return pids
+
+
+def _kill_orphan_uvicorn_workers():
+    """Kill orphaned uvicorn multiprocessing workers left after parent exit."""
+    if sys.platform != "win32":
+        return
+    try:
+        out = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                "Where-Object { $_.CommandLine -match 'spawn_main|uvicorn|backend.main' } | "
+                "Select-Object -ExpandProperty ProcessId",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        own_pid = str(os.getpid())
+        for line in out.stdout.splitlines():
+            proc_id = line.strip()
+            if proc_id.isdigit() and proc_id != own_pid:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", proc_id],
+                    capture_output=True, check=False, shell=True,
+                )
+    except Exception:
+        pass
+
+
+def free_prism_ports():
+    """Stop leftover PRISM dev processes so ports 8000/5177/5178 are available."""
+    own_pid = str(os.getpid())
+    killed = []
+    for port in PRISM_PORTS:
+        for pid in _pids_on_port(port):
+            if pid == own_pid:
+                continue
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", pid, "/T"],
+                    capture_output=True, check=False, shell=True,
+                )
+                killed.append((port, pid))
+            except Exception:
+                pass
+    _kill_orphan_uvicorn_workers()
+    if killed:
+        print("[CLEANUP] Freed stale ports:")
+        for port, pid in killed:
+            print(f"   port {port}  (pid {pid})")
+        time.sleep(1.5)
+
+
+def wait_for_backend(timeout: float = 90) -> bool:
+    """Poll /api/health until backend startup completes."""
+    url = "http://127.0.0.1:8000/api/health"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
 
 def print_banner():
     print("""
@@ -26,7 +146,7 @@ def print_banner():
 |   Backend API:    http://localhost:8000                  |
 |   API Docs:       http://localhost:8000/docs             |
 |   Patient App:    http://localhost:5177                  |
-|   Admin Portal:   http://localhost:5178 (use /admin)     |
+|   Admin Portal:   http://localhost:5178                |
 +----------------------------------------------------------+
 """)
 
@@ -62,11 +182,14 @@ def check_node():
 
 def check_python_deps():
     try:
-        import fastapi, uvicorn, langchain
+        subprocess.run(
+            [PYTHON, "-c", "import fastapi, uvicorn, langchain"],
+            check=True, capture_output=True,
+        )
         return True
-    except ImportError as e:
+    except (ImportError, subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"[WARN] Missing Python deps: {e}")
-        print(f"   Run: cd backend && pip install -r requirements.txt")
+        print(f"   Run: {PYTHON} -m pip install -r backend/requirements.txt")
         return False
 
 def install_frontend():
@@ -85,9 +208,22 @@ def install_frontend():
 def start_backend():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
+
+    cmd = [
+        PYTHON, "-m", "uvicorn", "backend.main:app",
+        "--host", "127.0.0.1", "--port", "8000",
+    ]
+    # Run from backend/ so uvicorn's file watcher only sees backend code.
+    # (When cwd is the repo root, uvicorn also watches .venv and OneDrive sync
+    # touches those files, causing endless reloads and killing the launcher.)
+    if os.environ.get("PRISM_NO_RELOAD", "").lower() not in {"1", "true", "yes"}:
+        cmd.append("--reload")
+        cmd.extend(["--reload-dir", str(ROOT / "backend")])
+
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "backend.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"],
+        cmd,
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+        **popen_kwargs(),
     )
     processes.append(proc)
     t = threading.Thread(target=stream_output, args=(proc, "backend", "cyan"), daemon=True)
@@ -100,7 +236,8 @@ def start_patient():
     env["NODE_OPTIONS"] = "--max-http-header-size=64000"
     proc = subprocess.Popen(
         ["npm", "run", "dev"],
-        cwd=FRONTEND, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, env=env
+        cwd=FRONTEND, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, env=env,
+        **popen_kwargs(),
     )
     processes.append(proc)
     t = threading.Thread(target=stream_output, args=(proc, "patient", "green"), daemon=True)
@@ -112,7 +249,8 @@ def start_admin():
     env["NODE_OPTIONS"] = "--max-http-header-size=64000"
     proc = subprocess.Popen(
         ["npm", "run", "admin"],
-        cwd=FRONTEND, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, env=env
+        cwd=FRONTEND, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, env=env,
+        **popen_kwargs(),
     )
     processes.append(proc)
     t = threading.Thread(target=stream_output, args=(proc, "admin", "magenta"), daemon=True)
@@ -141,17 +279,22 @@ def main():
 
     print("[START] Starting PRISM services...\n")
 
+    free_prism_ports()
+
     # Backend
     print("[RUN] Starting FastAPI backend on :8000...")
     start_backend()
-    time.sleep(3)
+    if wait_for_backend():
+        print("[RUN] Backend health check OK")
+    else:
+        print("[WARN] Backend not responding yet — check PostgreSQL and logs above")
 
     # Frontend
     if check_node():
-        print("[RUN] Starting Patient UI on :5173...")
+        print("[RUN] Starting Patient UI on :5177...")
         start_patient()
         time.sleep(1)
-        print("[RUN] Starting Admin Portal on :5174...")
+        print("[RUN] Starting Admin Portal on :5178...")
         start_admin()
 
     print("\n[SUCCESS] All services started! Press Ctrl+C to stop.\n")

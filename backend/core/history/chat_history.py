@@ -122,6 +122,60 @@ def generate_snippet(last_ai_message: str) -> str:
     return truncated[:last_space] + '…' if last_space > 0 else truncated + '…'
 
 
+STARTING_LINE_LENGTH = 80   # ChatGPT-style opening preview length
+
+
+def generate_starting_line(first_user_message: str) -> str:
+    """
+    ChatGPT-style opening line: clean first user message, truncated for quick recall.
+    """
+    text = re.sub(r'\[VOICE\]\s*', '', first_user_message or "")
+    text = re.sub(r'\[IMAGE:.*?\]\s*', '', text)
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'#+\s+', '', text)
+    text = re.sub(r'\n+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if not text:
+        return "New conversation"
+    if len(text) <= STARTING_LINE_LENGTH:
+        return text
+    truncated = text[:STARTING_LINE_LENGTH]
+    last_space = truncated.rfind(' ')
+    return truncated[:last_space] + '…' if last_space > 40 else truncated + '…'
+
+
+def _ensure_unique_labels(labels: List[str]) -> List[str]:
+    """Ensure topic labels are mutually exclusive (no duplicates)."""
+    seen: Dict[str, int] = {}
+    result = []
+    for label in labels:
+        base = label.strip()
+        if base not in seen:
+            seen[base] = 1
+            result.append(base)
+        else:
+            seen[base] += 1
+            result.append(f"{base} ({seen[base]})")
+    return result
+
+
+def _utc_iso(dt: Optional[datetime]) -> str:
+    """Serialize a naive UTC datetime for API clients (append Z for correct JS parsing)."""
+    if not dt:
+        return ""
+    return dt.isoformat() + ("Z" if dt.tzinfo is None else "")
+
+
+def _format_timestamp(dt: datetime) -> str:
+    """Topic table timestamp label (UTC values; clients should prefer _utc_iso + local format)."""
+    return f"{dt.day} {dt.strftime('%b %Y, %H:%M')}"
+
+
+def _age_days(updated_at: datetime) -> int:
+    """Calendar-day distance between now (UTC) and updated_at."""
+    return (datetime.utcnow().date() - updated_at.date()).days
+
+
 def group_by_topic(cards: List[Dict], threshold: float = 0.82) -> Dict[str, List[Dict]]:
     """
     Group conversation cards by semantic similarity of their titles using SentenceTransformer.
@@ -244,7 +298,7 @@ async def get_user_history_grouped(
         timeline:    [ conversation_card, ... ] (most recent first)
         stats:       { total_conversations, total_messages, active_agents, etc. }
     """
-    from sqlalchemy import select, func, desc
+    from sqlalchemy import select, func, desc, case
     from backend.database.models import Conversation, Message
 
     cutoff = datetime.utcnow() - timedelta(days=days)
@@ -304,7 +358,7 @@ async def get_user_history_grouped(
             Message.conversation_id,
             func.count(Message.id).label("total"),
             func.sum(
-                func.case((Message.role == "user", 1), else_=0)
+                case((Message.role == "user", 1), else_=0)
             ).label("user_count"),
         )
         .where(Message.conversation_id.in_(conv_ids))
@@ -329,8 +383,8 @@ async def get_user_history_grouped(
         agent_info  = AGENT_META.get(agent_id, {"name": agent_id, "icon": "🤖"})
         disease_info = DISEASE_META.get(disease_code, {"name": "General", "icon": "🏥", "color": "#6B7280"})
 
-        # Days ago label
-        age_days    = (datetime.utcnow() - conv.updated_at).days
+        # Days ago label (calendar days in UTC)
+        age_days    = _age_days(conv.updated_at)
         if age_days == 0:   age_label = "Today"
         elif age_days == 1: age_label = "Yesterday"
         else:               age_label = f"{age_days} days ago"
@@ -350,8 +404,8 @@ async def get_user_history_grouped(
             "total_messages":   counts.total if counts else 0,
             "user_turns":       counts.user_count if counts else 0,
             "escalated":        getattr(conv, "escalated", False),
-            "updated_at":       conv.updated_at.isoformat(),
-            "created_at":       conv.created_at.isoformat(),
+            "updated_at":       _utc_iso(conv.updated_at),
+            "created_at":       _utc_iso(conv.created_at),
             "age_label":        age_label,
             "age_days":         age_days,
             "expires_in_days":  max(0, days - age_days),
@@ -490,7 +544,7 @@ async def get_conversation_messages(
             "role":       m.role,
             "content":    m.content,
             "agent_id":   (m.agent_id or "").upper(),
-            "created_at": m.created_at.isoformat(),
+            "created_at": _utc_iso(m.created_at),
             "is_voice":   m.content.startswith("[VOICE]") if m.content else False,
             "is_image":   m.content.startswith("[IMAGE:") if m.content else False,
         }
@@ -505,7 +559,7 @@ async def get_conversation_messages(
             })
         msg_list.append(entry)
 
-    expires_in = max(0, HISTORY_DAYS - (datetime.utcnow() - conv.updated_at).days)
+    expires_in = max(0, HISTORY_DAYS - _age_days(conv.updated_at))
 
     return {
         "found":     True,
@@ -522,8 +576,8 @@ async def get_conversation_messages(
             "disease_icon": disease_info["icon"],
             "disease_color": disease_info["color"],
             "language":     conv.language or "en",
-            "created_at":   conv.created_at.isoformat(),
-            "updated_at":   conv.updated_at.isoformat(),
+            "created_at":   _utc_iso(conv.created_at),
+            "updated_at":   _utc_iso(conv.updated_at),
             "total_messages": len(messages),
             "expires_in_days": expires_in,
             "escalated":    getattr(conv, "escalated", False),
@@ -563,7 +617,7 @@ async def search_history(
             (
                 func.lower(Message.content).contains(query_lower) |
                 func.lower(Conversation.title).contains(query_lower) |
-                func.lower(Conversation.topic_label).contains(query_lower)
+                func.coalesce(func.lower(Conversation.topic_label), "").contains(query_lower)
             )
         )
         .order_by(desc(Message.created_at))
@@ -597,7 +651,7 @@ async def search_history(
             else:
                 highlighted = snippet[:SNIPPET_LENGTH]
 
-            age_days  = (datetime.utcnow() - conv.updated_at).days
+            age_days  = _age_days(conv.updated_at)
             age_label = "Today" if age_days == 0 else ("Yesterday" if age_days == 1 else f"{age_days}d ago")
 
             search_results.append({
@@ -612,7 +666,7 @@ async def search_history(
                 "disease_name":    disease_info["name"],
                 "disease_icon":    disease_info["icon"],
                 "disease_color":   disease_info["color"],
-                "updated_at":      conv.updated_at.isoformat(),
+                "updated_at":      _utc_iso(conv.updated_at),
                 "age_label":       age_label,
             })
 
@@ -621,6 +675,280 @@ async def search_history(
     grouped_topics = format_topics(grouped_raw)
 
     return grouped_topics
+
+
+async def _build_history_filters(user_id: str, db, cutoff: datetime) -> Dict:
+    """Build disease/agent filter options from all user conversations."""
+    from sqlalchemy import select
+    from backend.database.models import Conversation
+
+    conv_res = await db.execute(
+        select(Conversation)
+        .where(
+            Conversation.user_id    == user_id,
+            Conversation.updated_at >= cutoff,
+        )
+    )
+    conversations = conv_res.scalars().all()
+
+    by_disease: Dict = {}
+    by_agent: Dict = {}
+    for conv in conversations:
+        aid = (conv.agent_id or "").upper()
+        dc  = (conv.disease_code or aid[:2] or "").upper()
+        d_info = DISEASE_META.get(dc, {"name": dc, "icon": "🏥", "color": "#6B7280"})
+        a_info = AGENT_META.get(aid, {"name": aid, "icon": "🤖"})
+
+        if dc not in by_disease:
+            by_disease[dc] = {
+                "disease_code": dc,
+                "disease_name": d_info["name"],
+                "disease_icon": d_info["icon"],
+                "agents":       {},
+            }
+        if aid not in by_disease[dc]["agents"]:
+            by_disease[dc]["agents"][aid] = {
+                "agent_id":   aid,
+                "agent_name": a_info["name"],
+                "agent_icon": a_info["icon"],
+            }
+        if aid not in by_agent:
+            by_agent[aid] = {
+                "agent_id":     aid,
+                "agent_name":   a_info["name"],
+                "agent_icon":   a_info["icon"],
+                "disease_code": dc,
+            }
+
+    return {"by_disease": by_disease, "by_agent": by_agent}
+
+
+async def get_topic_history(
+    user_id:      str,
+    db,
+    disease_code: Optional[str] = None,
+    agent_id:     Optional[str] = None,
+    days:         int = HISTORY_DAYS,
+) -> Dict:
+    """
+    Build topic table rows (Topic, Timestamp, Starting Line).
+    Optional disease/agent filters; without filters returns all user conversations.
+    """
+    from sqlalchemy import select, asc
+    from backend.database.models import Conversation, Message
+
+    if disease_code:
+        disease_code = disease_code.upper()
+    if agent_id:
+        agent_id = agent_id.upper()
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    filters = await _build_history_filters(user_id, db, cutoff)
+
+    conv_q = (
+        select(Conversation)
+        .where(
+            Conversation.user_id    == user_id,
+            Conversation.updated_at >= cutoff,
+        )
+    )
+    if disease_code:
+        conv_q = conv_q.where(Conversation.disease_code == disease_code)
+    if agent_id:
+        conv_q = conv_q.where(Conversation.agent_id == agent_id)
+
+    conv_res = await db.execute(
+        conv_q.order_by(asc(Conversation.created_at)).limit(MAX_HISTORY_ITEMS)
+    )
+    conversations = conv_res.scalars().all()
+
+    # Header labels for the table
+    if disease_code and agent_id:
+        d_info = DISEASE_META.get(disease_code, {"name": disease_code, "icon": "🏥"})
+        a_info = AGENT_META.get(agent_id, {"name": agent_id, "icon": "🤖"})
+        header_title = f"{d_info['name']} · {a_info['name']}"
+    elif disease_code:
+        d_info = DISEASE_META.get(disease_code, {"name": disease_code, "icon": "🏥"})
+        header_title = f"{d_info['name']} · All agents"
+    elif agent_id:
+        a_info = AGENT_META.get(agent_id, {"name": agent_id, "icon": "🤖"})
+        header_title = f"All diseases · {a_info['name']}"
+    else:
+        header_title = "All conversations"
+
+    if not conversations:
+        return {
+            "disease_code":  disease_code,
+            "agent_id":      agent_id,
+            "header_title":  header_title,
+            "disease_name":  DISEASE_META.get(disease_code or "", {}).get("name"),
+            "agent_name":    AGENT_META.get(agent_id or "", {}).get("name"),
+            "topics":        [],
+            "total":         0,
+            "filters":       filters,
+        }
+
+    conv_ids = [c.id for c in conversations]
+
+    first_msg_res = await db.execute(
+        select(Message)
+        .where(
+            Message.conversation_id.in_(conv_ids),
+            Message.role == "user",
+        )
+        .order_by(Message.conversation_id, Message.created_at)
+        .distinct(Message.conversation_id)
+    )
+    first_msgs = {m.conversation_id: m for m in first_msg_res.scalars().all()}
+
+    # Build raw topic labels (custom or auto-generated summary)
+    raw_labels = []
+    for conv in conversations:
+        first_msg = first_msgs.get(conv.id)
+        raw_content = first_msg.content if first_msg else conv.title or ""
+        if conv.topic_label and conv.topic_label.strip():
+            raw_labels.append(conv.topic_label.strip())
+        else:
+            raw_labels.append(generate_conversation_title(raw_content))
+
+    # Unique labels scoped per disease + agent
+    used_labels_by_scope: Dict[tuple, set] = {}
+    unique_labels = []
+    for i, conv in enumerate(conversations):
+        scope = ((conv.disease_code or (conv.agent_id or "")[:2] or "").upper(), (conv.agent_id or "").upper())
+        if scope not in used_labels_by_scope:
+            used_labels_by_scope[scope] = set()
+
+        if conv.topic_label and conv.topic_label.strip():
+            label = conv.topic_label.strip()
+            unique_labels.append(label)
+            used_labels_by_scope[scope].add(label.lower())
+        else:
+            label = raw_labels[i]
+            base  = label
+            counter = 2
+            while label.lower() in used_labels_by_scope[scope]:
+                label = f"{base} ({counter})"
+                counter += 1
+            used_labels_by_scope[scope].add(label.lower())
+            unique_labels.append(label)
+
+    # Semantic clustering within current result set
+    cards_for_cluster = [
+        {"conversation_id": conv.id, "title": unique_labels[i]}
+        for i, conv in enumerate(conversations)
+    ]
+    clustered = group_by_topic(cards_for_cluster)
+    conv_to_cluster: Dict[str, str] = {}
+    for cluster_label, cluster_cards in clustered.items():
+        for cc in cluster_cards:
+            conv_to_cluster[cc["conversation_id"]] = cluster_label
+
+    topics = []
+    for i, conv in enumerate(conversations):
+        first_msg = first_msgs.get(conv.id)
+        raw_content = first_msg.content if first_msg else conv.title or ""
+        starting_line = generate_starting_line(raw_content)
+        ts = conv.created_at
+        aid = (conv.agent_id or "").upper()
+        dc  = (conv.disease_code or aid[:2] or "").upper()
+        d_info = DISEASE_META.get(dc, {"name": dc, "icon": "🏥"})
+        a_info = AGENT_META.get(aid, {"name": aid, "icon": "🤖"})
+
+        topics.append({
+            "conversation_id":  conv.id,
+            "first_message_id": first_msg.id if first_msg else None,
+            "topic":            unique_labels[i],
+            "topic_custom":     bool(conv.topic_label and conv.topic_label.strip()),
+            "cluster_label":    conv_to_cluster.get(conv.id, unique_labels[i]),
+            "timestamp":        _utc_iso(ts),
+            "timestamp_label":  _format_timestamp(ts),
+            "starting_line":    starting_line,
+            "total_messages":   conv.total_messages or 0,
+            "updated_at":       _utc_iso(conv.updated_at),
+            "disease_code":     dc,
+            "agent_id":         aid,
+            "disease_name":     d_info["name"],
+            "agent_name":       a_info["name"],
+            "disease_icon":     d_info["icon"],
+            "agent_icon":       a_info["icon"],
+        })
+
+    return {
+        "disease_code":  disease_code,
+        "agent_id":      agent_id,
+        "header_title":  header_title,
+        "disease_name":  DISEASE_META.get(disease_code or "", {}).get("name"),
+        "agent_name":    AGENT_META.get(agent_id or "", {}).get("name"),
+        "topics":        topics,
+        "total":         len(topics),
+        "clusters":      len(clustered),
+        "filters":       filters,
+    }
+
+
+# Backward-compatible alias
+async def get_agent_topic_history(user_id, disease_code, agent_id, db, days=HISTORY_DAYS):
+    return await get_topic_history(user_id, db, disease_code=disease_code, agent_id=agent_id, days=days)
+
+
+async def rename_conversation_topic(
+    conversation_id: str,
+    user_id:         str,
+    new_label:       str,
+    db,
+) -> Dict:
+    """
+    Rename a conversation topic. Labels must be unique within the same
+    disease + agent scope for this user.
+    """
+    from sqlalchemy import select
+    from backend.database.models import Conversation
+
+    new_label = (new_label or "").strip()
+    if not new_label:
+        return {"success": False, "error": "Topic name cannot be empty."}
+    if len(new_label) > 200:
+        return {"success": False, "error": "Topic name too long (max 200 characters)."}
+
+    conv_res = await db.execute(
+        select(Conversation).where(
+            Conversation.id      == conversation_id,
+            Conversation.user_id == user_id,
+        )
+    )
+    conv = conv_res.scalar_one_or_none()
+    if not conv:
+        return {"success": False, "error": "Conversation not found."}
+
+    # Uniqueness check within disease + agent
+    dup_res = await db.execute(
+        select(Conversation).where(
+            Conversation.user_id      == user_id,
+            Conversation.disease_code == conv.disease_code,
+            Conversation.agent_id     == conv.agent_id,
+            Conversation.id           != conversation_id,
+        )
+    )
+    existing = dup_res.scalars().all()
+    for other in existing:
+        other_label = (other.topic_label or "").strip()
+        if not other_label:
+            continue
+        if other_label.lower() == new_label.lower():
+            return {
+                "success": False,
+                "error": f'Topic name "{new_label}" is already used. Please choose a unique name.',
+            }
+
+    conv.topic_label = new_label
+    await db.commit()
+
+    return {
+        "success":         True,
+        "conversation_id": conversation_id,
+        "topic":           new_label,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

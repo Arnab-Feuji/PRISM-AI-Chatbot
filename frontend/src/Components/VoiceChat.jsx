@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { Mic } from "lucide-react";
 import { useAuthStore } from "../store/auth";
 
 const API = "/api";
@@ -81,6 +82,7 @@ export default function VoiceChat({
   diseaseName   = "Medical",
   language      = "en",
   onMessageAdded,   // callback({role, content, isVoice, voiceData}) → adds to chat
+  embedded      = false,
 }) {
   const storeToken = useAuthStore(state => state.token);
   const [phase, setPhase]           = useState(PHASE.IDLE);
@@ -378,7 +380,10 @@ export default function VoiceChat({
 
   // ─── RENDER ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+    <div style={{
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      ...(embedded ? { position: "absolute", right: 8, bottom: 8, zIndex: 2 } : {}),
+    }}>
 
       {/* ── IDLE: Mic button ─────────────────────────────────────────────────── */}
       {phase === PHASE.IDLE && (
@@ -388,12 +393,15 @@ export default function VoiceChat({
           style={{
             display:      "flex",
             alignItems:   "center",
-            gap:          5,
-            padding:      "6px 12px",
-            background:   "transparent",
-            border:       `1px solid ${diseaseColor}55`,
-            borderRadius: 8,
-            color:        diseaseColor,
+            justifyContent: "center",
+            gap:          embedded ? 0 : 5,
+            padding:      embedded ? 6 : "6px 12px",
+            width:        embedded ? 32 : undefined,
+            height:       embedded ? 32 : undefined,
+            background:   embedded ? "transparent" : "transparent",
+            border:       embedded ? "none" : `1px solid ${diseaseColor}55`,
+            borderRadius: embedded ? "50%" : 8,
+            color:        embedded ? "var(--text-dim, #64748B)" : diseaseColor,
             cursor:       "pointer",
             fontSize:     12,
             fontWeight:   500,
@@ -401,10 +409,26 @@ export default function VoiceChat({
             flexShrink:   0,
             transition:   "all .15s",
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = diseaseColor + "15"; e.currentTarget.style.borderColor = diseaseColor; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = diseaseColor + "55"; }}
+          onMouseEnter={e => {
+            if (embedded) {
+              e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+              e.currentTarget.style.color = diseaseColor;
+            } else {
+              e.currentTarget.style.background = diseaseColor + "15";
+              e.currentTarget.style.borderColor = diseaseColor;
+            }
+          }}
+          onMouseLeave={e => {
+            if (embedded) {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "var(--text-dim, #64748B)";
+            } else {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = diseaseColor + "55";
+            }
+          }}
         >
-          <span style={{ fontSize: 16 }}>🎙️</span> Speak
+          {embedded ? <Mic size={18} strokeWidth={2} /> : <><span style={{ fontSize: 16 }}>🎙️</span> Speak</>}
         </button>
       )}
 

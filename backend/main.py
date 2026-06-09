@@ -2,6 +2,7 @@
 PRISM — FastAPI Main Application
 All routes: auth, chat, ingest, admin, crawl, feedback, multimodal
 """
+import logging
 from backend.core.multimodal.visual_intent_detector import (
     detect_visual_intent, get_visual_offer_text, VISUAL_INTENTS,
 )
@@ -28,6 +29,8 @@ from backend.core.conversation.response_engine import (
 from backend.core.history.chat_history import (
     get_user_history_grouped,
     get_conversation_messages,
+    get_topic_history,
+    rename_conversation_topic,
     search_history,
     purge_expired_history,
     get_history_stats,
@@ -90,7 +93,15 @@ from backend.core.rag.document_validator import (
     compute_agent_f1
 )
 from backend.core.multimodal.image_validator import classify_image_with_vision
-from backend.core.quality.metrics_tracker import MetricsTracker
+from backend.core.quality.metrics_tracker import (
+    MetricsTracker,
+    classify_response_retrieval,
+    flags_for_source,
+    backfill_message_retrieval_sources,
+    compute_retrieval_distribution,
+    SOURCE_CLARIFYING,
+    SOURCE_MULTIMODAL,
+)
 
 settings = get_settings()
 
@@ -99,6 +110,8 @@ app = FastAPI(
     description="Patient-centric Retrieval Intelligence System for Medicine",
     version="2.0.0",
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -205,36 +218,60 @@ quality_scorer  = ResponseQualityScorer()
 
 @app.on_event("startup")
 async def startup():
-    t0 = time.time()
-    print("\n" + "="*80)
-    print("PRISM BACKEND STARTUP INITIALIZED")
-    print("="*80)
-    
-    try:
-        print(f"[STARTUP] Environment: {settings.environment}")
-        print(f"[STARTUP] Database: {settings.database_url.split('@')[-1]}") # Log host only for safety
-        
-        print("[STARTUP] Initializing database tables and migrations...")
-        await create_tables()
-        print("[STARTUP] Database initialized successfully.")
-    except Exception as e:
-        print(f"\n[STARTUP] Database connection failed: {e}")
-        print("Development mode: Continuing without database initialization.")
-        print("Note: Database-dependent endpoints will fail until database is available.")
-        print("To fix: Start PostgreSQL with 'docker-compose up postgres' or set DATABASE_URL for SQLite")
+    import asyncio
+    from backend.database.chroma_registry import set_main_event_loop
 
+    set_main_event_loop(asyncio.get_running_loop())
     os.makedirs(settings.upload_dir, exist_ok=True)
-    
-    # Start 15-day history cleanup scheduler
+
     try:
         start_cleanup_scheduler(AsyncSessionFactory)
         print("[STARTUP] History cleanup scheduler started.")
     except Exception as e:
         print(f"[STARTUP_WARNING] Failed to start history cleanup: {e}")
 
+    asyncio.create_task(_background_startup())
+    print("[STARTUP] HTTP server ready — database init running in background")
+
+
+async def _background_startup():
+    """Migrations + retrieval backfill after uvicorn is accepting requests."""
+    import asyncio
+
+    t0 = time.time()
+    print("\n" + "=" * 80)
+    print("PRISM BACKEND BACKGROUND INIT")
+    print("=" * 80)
+    try:
+        print(f"[STARTUP] Environment: {settings.environment}")
+        print(f"[STARTUP] Database: {settings.database_url.split('@')[-1]}")
+        print("[STARTUP] Initializing database tables and migrations...")
+        await asyncio.wait_for(create_tables(), timeout=120)
+        print("[STARTUP] Database initialized successfully.")
+
+        try:
+            async with AsyncSessionFactory() as session:
+                stats = await asyncio.wait_for(
+                    backfill_message_retrieval_sources(session, commit=True),
+                    timeout=60,
+                )
+                print(
+                    f"[STARTUP] Retrieval backfill: scanned={stats.get('scanned', 0)} "
+                    f"updated={stats.get('updated', 0)} "
+                    f"cdc_pubmed={stats.get('cdc_pubmed', 0)} "
+                    f"llm_fallback={stats.get('llm_fallback', 0)}"
+                )
+        except Exception as bf_err:
+            print(f"[STARTUP] Retrieval backfill skipped: {bf_err}")
+    except asyncio.TimeoutError:
+        print("[STARTUP] Database init timed out — API is up; check PostgreSQL.")
+    except Exception as e:
+        print(f"[STARTUP] Database connection failed: {e}")
+        print("To fix: Start PostgreSQL with 'docker-compose up postgres'")
+
     duration = (time.time() - t0) * 1000
-    print(f"[STARTUP] Backend ready in {duration:.0f}ms")
-    print("="*80 + "\n")
+    print(f"[STARTUP] Background init finished in {duration:.0f}ms")
+    print("=" * 80 + "\n")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -811,8 +848,12 @@ async def chat(
         # Save messages
         db.add(Message(id=str(uuid.uuid4()), conversation_id=conv.id, role="user",
                        content=native_display if is_romanised else req.message, agent_id=agent_id))
+        clarifying_flags = flags_for_source(SOURCE_CLARIFYING)
         db.add(Message(id=str(uuid.uuid4()), conversation_id=conv.id, role="assistant",
-                       content=final_question, agent_id=agent_id, is_clarifying_question=True))
+                       content=final_question, agent_id=agent_id, is_clarifying_question=True,
+                       response_source=clarifying_flags["response_source"],
+                       chroma_grounded=clarifying_flags["chroma_grounded"],
+                       llm_fallback=clarifying_flags["llm_fallback"]))
         conv.total_messages = (conv.total_messages or 0) + 2
         conv.meta_json = meta
         await db.commit()
@@ -1055,6 +1096,7 @@ async def chat(
         agent_id=agent_id,
     ))
     ai_msg_id = str(uuid.uuid4())
+    retrieval_flags = classify_response_retrieval(routing_result)
     db.add(Message(
         id=ai_msg_id,
         conversation_id=conv.id,
@@ -1064,6 +1106,7 @@ async def chat(
         confidence=actual_confidence,
         frustration=routing_result["frustration_score"],
         citations=routing_result["citations"],
+        retrieved_chunks=routing_result.get("retrieved_chunks") or [],
         ragas_scores=routing_result["ragas_scores"],
         processing_ms=routing_result["processing_ms"],
         follow_up_questions=translated_follow_ups,
@@ -1072,6 +1115,10 @@ async def chat(
         response_format=format_used,
         intent=intent,
         visual_payload=visual_payload,
+        response_source=retrieval_flags["response_source"],
+        chroma_grounded=retrieval_flags["chroma_grounded"],
+        llm_fallback=retrieval_flags["llm_fallback"],
+        retrieval_detail=retrieval_flags.get("retrieval_detail") or {},
     ))
     conv.total_messages = (conv.total_messages or 0) + 2
     conv.updated_at     = datetime.utcnow()
@@ -1309,11 +1356,15 @@ async def chat_image(
         ))
         
         ai_msg_id = str(uuid.uuid4())
+        multimodal_flags = flags_for_source(SOURCE_MULTIMODAL)
         db.add(Message(
             id=ai_msg_id, conversation_id=conv.id, role="assistant",
             content=analysis["response"], agent_id=agent_id,
             citations=analysis["citations"], multimodal_type=analysis_type,
-            processing_ms=int((time.time() - t0) * 1000)
+            processing_ms=int((time.time() - t0) * 1000),
+            response_source=multimodal_flags["response_source"],
+            chroma_grounded=multimodal_flags["chroma_grounded"],
+            llm_fallback=multimodal_flags["llm_fallback"],
         ))
         
         # Write file to disk to persist upload
@@ -1818,6 +1869,7 @@ async def ingest_document(
         prerag_score=report["total_score"],
         prerag_tier=report["quality_standard"],
         is_active=True,
+        metadata_json={"ingest_origin": "manual"},
         created_at=datetime.utcnow()
     )
     db.add(doc)
@@ -1888,14 +1940,19 @@ async def crawl(req: CrawlRequest,
             
             meta = {
                 "source": doc.get("source",""), 
+                "title": doc.get("title", "Untitled"),
                 "year": doc.get("year"),
                 "source_url": doc.get("source_url",""), 
                 "doc_type": doc.get("doc_type",""),
                 "agent_scope": req.agent_id,
+                "evidence_grade": "B",
             }
             
-            # Run blocking ingestion in threadpool
-            ingest_res = await loop.run_in_executor(None, lambda: pipeline.ingest(text, meta, agent.collection_name))
+            # Run blocking ingestion in threadpool (default args avoid closure bugs)
+            ingest_res = await loop.run_in_executor(
+                None,
+                lambda t=text, m=meta, col=agent.collection_name: pipeline.ingest(t, m, col),
+            )
             
             # Pre-RAG Analysis
             report = calculate_prerag_report(text, meta)
@@ -1915,7 +1972,11 @@ async def crawl(req: CrawlRequest,
                 chunk_count=ingest_res.get("chunks_created", 0),
                 token_count=int(len(text.split()) * 1.3),
                 prerag_score=report["total_score"],
-                prerag_tier=report["quality_standard"]
+                prerag_tier=report["quality_standard"],
+                metadata_json={
+                    "ingest_origin": "crawl_pubmed" if req.source == "pubmed" else "crawl_cdc",
+                    "crawl_query": req.query,
+                },
             )
             db.add(db_doc)
 
@@ -1935,6 +1996,9 @@ async def crawl(req: CrawlRequest,
             added_count += 1
         
         if added_count > 0:
+            from backend.database.chroma_registry import sync_collection_from_chroma
+            await sync_collection_from_chroma(agent.collection_name)
+
             alert = SystemAlert(
                 id=str(uuid.uuid4()),
                 level="info",
@@ -2016,16 +2080,34 @@ async def admin_overview(current: dict = Depends(require_admin), db: AsyncSessio
     fb_res = await db.execute(func.avg(PatientFeedback.rating))
     avg_rating = fb_res.scalar() or 0
 
-    from backend.database.models import LLMCallLog
-    llm_count = (await db.execute(func.count(LLMCallLog.id))).scalar() or 0
+    llm_log_count = (await db.execute(func.count(LLMCallLog.id))).scalar() or 0
+    llm_alert_count = (await db.execute(
+        select(func.count(SystemAlert.id)).where(SystemAlert.component == "llm_call")
+    )).scalar() or 0
+    llm_interactions = int(max(llm_alert_count, llm_log_count))
+
+    # Fast SQL aggregation only — backfill runs at startup, not on every dashboard poll
+    retrieval = await compute_retrieval_distribution(db)
+    cdc_pubmed_retrievals   = retrieval["cdc_pubmed_retrievals"]
+    llm_fallback_retrievals = retrieval["llm_fallback_retrievals"]
 
     return {
-        "users":         users_count or 0,
-        "conversations": conv_count or 0,
-        "messages":      msg_count or 0,
-        "documents":     doc_count or 0,
-        "llm_calls":     llm_count,
-        "avg_feedback":  round(float(avg_rating or 0), 2),
+        "users":                   users_count or 0,
+        "conversations":           conv_count or 0,
+        "messages":                msg_count or 0,
+        "documents":               doc_count or 0,
+        "llm_calls":               llm_interactions,
+        "llm_interactions":        llm_interactions,
+        "cdc_pubmed_retrievals":   int(cdc_pubmed_retrievals),
+        "llm_fallback_retrievals": int(llm_fallback_retrievals),
+        "retrieval_answer_total":  retrieval.get("retrieval_answer_total", 0),
+        "clarifying_responses":    int(retrieval.get("clarifying_responses", 0)),
+        "multimodal_responses":    retrieval.get("multimodal_responses", 0),
+        "legacy_responses":        retrieval.get("legacy_responses", 0),
+        "assistant_messages":      retrieval.get("assistant_total", 0),
+        "chroma_calls":            int(cdc_pubmed_retrievals),
+        "llm_fallbacks":           int(llm_fallback_retrievals),
+        "avg_feedback":            round(float(avg_rating or 0), 2),
         "ragas": {
             "faithfulness":     round(float(ragas_row[0] or 0), 3),
             "answer_relevancy": round(float(ragas_row[1] or 0), 3),
@@ -2082,6 +2164,33 @@ async def admin_feedback(current: dict = Depends(require_admin), db: AsyncSessio
              "agent_id": f.agent_id or "??", "disease_code": f.disease_code or "??",
              "comment": f.comment or "", "tags": getattr(f, "tags", []),
              "created_at": f.created_at.isoformat() if f.created_at else datetime.utcnow().isoformat()} for f in fbs]
+
+@app.get("/api/admin/scorecard")
+@app.get("/api/admin/responsible-ai/scorecard")
+async def admin_responsible_ai_scorecard(
+    current: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from backend.core.admin.admin_metrics import get_responsible_ai_scorecard
+    try:
+        return await get_responsible_ai_scorecard(db)
+    except Exception as exc:
+        logger.exception("Responsible AI scorecard failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Scorecard load failed: {exc}")
+
+@app.get("/api/admin/recommendations-360")
+@app.get("/api/admin/recommendations/360")
+async def admin_recommendations_360(
+    days: int = 15,
+    current: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from backend.core.admin.recommendations import get_recommendations_360
+    try:
+        return await get_recommendations_360(db, days=min(days, 15))
+    except Exception as exc:
+        logger.exception("360 recommendations failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Recommendations load failed: {exc}")
 
 @app.get("/api/admin/alerts")
 async def admin_alerts(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
@@ -2168,34 +2277,30 @@ async def admin_quality_summary(days: int = 15, current: dict = Depends(require_
 
 @app.get("/api/admin/prerag/report")
 async def admin_prerag_report(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Returns a combined list of indexed documents and their Pre-RAG reports."""
+    """Returns indexed + crawled documents and their Pre-RAG reports."""
     from sqlalchemy.orm import joinedload
+    from backend.core.admin.prerag_sync import (
+        build_prerag_report_row,
+        sync_crawled_documents_to_prerag,
+    )
+
+    try:
+        synced = await sync_crawled_documents_to_prerag(
+            db, calculate_report=calculate_prerag_report, commit=True,
+        )
+        if synced:
+            print(f"[PRERAG] Synced {synced} crawled document(s) from Chroma into readiness registry.")
+    except Exception as sync_err:
+        print(f"[PRERAG] Chroma sync skipped: {sync_err}")
+
     res = await db.execute(
         select(IndexedDocument)
         .options(joinedload(IndexedDocument.prerag_report))
         .order_by(desc(IndexedDocument.created_at))
-        .limit(100)
+        .limit(200)
     )
     docs = res.scalars().unique().all()
-    
-    report = []
-    for d in docs:
-        pr = d.prerag_report
-        report.append({
-            "id": d.id,
-            "title": d.title,
-            "source": d.source,
-            "agent_id": d.agent_id,
-            "disease_code": d.disease_code,
-            "prerag_tier": d.prerag_tier,
-            "prerag_score": d.prerag_score,
-            "tier1_score": pr.tier1_score if pr else d.prerag_score * 0.4, # Fallback for old docs
-            "tier2_score": pr.tier2_score if pr else d.prerag_score * 0.6,
-            "dim_scores": pr.dim_scores if pr else {},
-            "reject_reasons": pr.reject_reasons if pr else [],
-            "created_at": d.created_at.isoformat() if d.created_at else datetime.utcnow().isoformat()
-        })
-    return report
+    return [build_prerag_report_row(d, d.prerag_report) for d in docs]
 
 @app.get("/api/admin/vector-store")
 async def admin_vector_store(
@@ -2630,6 +2735,42 @@ async def history_search(q: str, disease: Optional[str] = None, agent: Optional[
     results = await search_history(user_id=current["user_id"], query=q.strip(), db=db, days=HISTORY_DAYS, disease=disease, agent_id=agent)
     return {"results": results, "query": q, "count": len(results)}
 
+class TopicRenameRequest(BaseModel):
+    topic: str
+
+@app.get("/api/history/topics")
+async def history_topics(
+    disease: Optional[str] = None,
+    agent:   Optional[str] = None,
+    days:    int = HISTORY_DAYS,
+    current: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_topic_history(
+        user_id=current["user_id"],
+        db=db,
+        disease_code=disease,
+        agent_id=agent,
+        days=min(int(days), HISTORY_DAYS),
+    )
+
+@app.patch("/api/history/topics/{conversation_id}")
+async def rename_history_topic(
+    conversation_id: str,
+    req: TopicRenameRequest,
+    current: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await rename_conversation_topic(
+        conversation_id=conversation_id,
+        user_id=current["user_id"],
+        new_label=req.topic,
+        db=db,
+    )
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error", "Rename failed."))
+    return result
+
 @app.get("/api/history/{conversation_id}")
 async def get_conversation_history(conversation_id: str, current: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await get_conversation_messages(conversation_id=conversation_id, user_id=current["user_id"], db=db, include_metadata=True)
@@ -2682,6 +2823,7 @@ async def admin_all_quality(days: int = 15, current: dict = Depends(require_admi
         "avg_cqs": round(sum(r["cqs"] for r in results) / max(len(results), 1), 1),
         "period_days": days
     }
+
 # ── Real-Time System Health Check ─────────────────────────────────────────
 @app.get("/api/admin/health")
 async def admin_system_health(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):

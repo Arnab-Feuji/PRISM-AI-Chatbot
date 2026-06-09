@@ -591,7 +591,21 @@ class PRISMFullRAGPipeline:
             "context":         context,
             "citations":       citations,
             "confidence":      confidence,
-            "chunks":          [{"text": c.text, "rerank_score": c.rerank_score} for c in reranker_result.ranked_chunks],
+            "chunks":          [
+                {
+                    "text":         c.text,
+                    "rerank_score": c.rerank_score,
+                    "source_doc":   c.source_doc,
+                    "section":      c.section_title,
+                    "metadata":     {
+                        "source_doc":    c.source_doc,
+                        "source":        c.source_doc,
+                        "section_title": c.section_title,
+                        "agent_id":      c.agent_id,
+                    },
+                }
+                for c in reranker_result.ranked_chunks
+            ],
             "chunks_used":     reranker_result.candidates_out,
             "chunks_retrieved":reranker_result.candidates_in,
             "hyde_used":       hyde_result is not None,
