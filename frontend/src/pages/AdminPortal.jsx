@@ -100,7 +100,7 @@ const TooltipUI = ({ title, content, children }) => {
           backgroundColor: 'var(--bg-card)',
           border: '1px solid var(--border)',
           borderRadius: '16px',
-          boxShadow: '0 25px 50px rgba(0,0,0,0.9)',
+          boxShadow: '0 12px 32px rgba(16, 38, 67, 0.14)',
           textAlign: 'left',
           pointerEvents: 'none',
           opacity: 0,
@@ -108,11 +108,11 @@ const TooltipUI = ({ title, content, children }) => {
           transition: 'all 0.2s ease-out'
         }}
       >
-        <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', border: '8px solid transparent', borderBottomColor: '#0F172A' }} />
-        <div style={{ fontSize: '9px', fontWeight: '900', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '4px' }}>
+        <div className="executive-tooltip-arrow" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', border: '8px solid transparent', borderBottomColor: 'var(--bg-card)' }} />
+        <div className="executive-tooltip-title" style={{ fontSize: '9px', fontWeight: '900', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '6px', borderBottom: '1px solid var(--border)', paddingBottom: '4px' }}>
           {title || 'Metric Insights'}
         </div>
-        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.95)', lineHeight: '1.5', fontWeight: '500' }}>
+        <div className="executive-tooltip-body" style={{ fontSize: '11px', color: 'var(--text-main)', lineHeight: '1.5', fontWeight: '500' }}>
           {content}
         </div>
       </div>
@@ -3735,7 +3735,7 @@ export default function AdminPortal() {
 
       {/* Main */}
       <main className="flex-1 overflow-y-auto bg-[var(--bg-main)] transition-all duration-500">
-        <header className="sticky top-0 bg-[var(--bg-main)]/80 backdrop-blur-md border-b border-white/5 px-8 py-4 flex items-center justify-between z-20">
+        <header className="sticky top-0 bg-[var(--bg-card)] border-b border-[var(--border)] px-8 py-4 flex items-center justify-between z-20 shadow-sm">
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-black tracking-tight text-[var(--text-main)]">{NAV.find(n => n.id === active)?.label}</h1>
           </div>

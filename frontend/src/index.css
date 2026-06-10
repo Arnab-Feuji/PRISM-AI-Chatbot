@@ -53,6 +53,26 @@
   --grad-primary: linear-gradient(to right, #22D3EE, #8B5CF6);
 }
 
+.theme-material-patient {
+  --bg-main: #F4F7FB;
+  --bg-card: #FFFFFF;
+  --accent: #1565C0;
+  --accent-glow: rgba(21, 101, 192, 0.2);
+  --text-main: #1A2332;
+  --text-dim: #5C6B7A;
+  --border: rgba(26, 35, 50, 0.08);
+  --grad-primary: linear-gradient(to right, #1565C0, #00897B);
+}
+
+html.material-admin {
+  --bg-main: #EEF2F7;
+  --bg-card: #FFFFFF;
+  --accent: #0D47A1;
+  --text-main: #102A43;
+  --text-dim: #627D98;
+  --border: rgba(16, 38, 67, 0.1);
+}
+
 @layer base {
   body {
     @apply bg-[var(--bg-main)] text-[var(--text-main)] font-sans antialiased transition-all duration-500;

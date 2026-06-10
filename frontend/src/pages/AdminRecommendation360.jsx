@@ -82,7 +82,7 @@ function TooltipUI({ title, content, children, inline = false }) {
           backgroundColor: "var(--bg-card)",
           border: "1px solid var(--border)",
           borderRadius: "16px",
-          boxShadow: "0 25px 50px rgba(0,0,0,0.9)",
+          boxShadow: "0 12px 32px rgba(16, 38, 67, 0.14)",
           textAlign: "left",
           pointerEvents: "none",
           opacity: 0,
@@ -90,11 +90,11 @@ function TooltipUI({ title, content, children, inline = false }) {
           transition: "all 0.2s ease-out",
         }}
       >
-        <div style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", border: "8px solid transparent", borderBottomColor: "#0F172A" }} />
-        <div style={{ fontSize: "9px", fontWeight: "900", color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "6px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "4px" }}>
+        <div className="executive-tooltip-arrow" style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", border: "8px solid transparent", borderBottomColor: "var(--bg-card)" }} />
+        <div className="executive-tooltip-title" style={{ fontSize: "9px", fontWeight: "900", color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "6px", borderBottom: "1px solid var(--border)", paddingBottom: "4px" }}>
           {title || "Metric Insights"}
         </div>
-        <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.95)", lineHeight: "1.5", fontWeight: "500" }}>
+        <div className="executive-tooltip-body" style={{ fontSize: "11px", color: "var(--text-main)", lineHeight: "1.5", fontWeight: "500" }}>
           {content}
         </div>
       </div>

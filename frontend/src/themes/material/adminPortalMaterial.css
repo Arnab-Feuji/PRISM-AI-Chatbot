@@ -1,0 +1,124 @@
+/* Material UI admin portal — light-theme compatibility for legacy Tailwind markup */
+
+.admin-portal-material {
+  color: var(--text-main);
+}
+
+/* Sticky tab header (System Overview, RAGAS, etc.) */
+.admin-portal-material main > header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 40 !important;
+  background-color: var(--bg-card) !important;
+  border-bottom: 1px solid var(--border) !important;
+  box-shadow: 0 1px 4px rgba(16, 38, 67, 0.08) !important;
+  backdrop-filter: none !important;
+}
+
+.admin-portal-material main > header h1 {
+  color: var(--text-main) !important;
+}
+
+.admin-portal-material aside {
+  border-right-color: var(--border) !important;
+  box-shadow: 1px 0 0 var(--border);
+}
+
+/* Tooltips */
+.admin-portal-material .executive-tooltip {
+  box-shadow: 0 12px 32px rgba(16, 38, 67, 0.14) !important;
+}
+
+.admin-portal-material .executive-tooltip .executive-tooltip-title {
+  border-bottom-color: var(--border) !important;
+}
+
+.admin-portal-material .executive-tooltip .executive-tooltip-body {
+  color: var(--text-main) !important;
+}
+
+.admin-portal-material .executive-tooltip .executive-tooltip-arrow {
+  border-bottom-color: var(--bg-card) !important;
+}
+
+/* Tables & muted labels */
+.admin-portal-material .text-gray-300,
+.admin-portal-material .text-gray-400,
+.admin-portal-material .text-gray-500 {
+  color: var(--text-dim) !important;
+  opacity: 1 !important;
+}
+
+.admin-portal-material th,
+.admin-portal-material td {
+  color: var(--text-main);
+}
+
+.admin-portal-material thead {
+  background-color: var(--bg-main) !important;
+}
+
+.admin-portal-material .text-ink,
+.admin-portal-material .text-ink2,
+.admin-portal-material .text-ink3 {
+  color: var(--text-dim) !important;
+  opacity: 1 !important;
+}
+
+/* Dark translucent panels → light muted surfaces */
+.admin-portal-material [class*='bg-black/'] {
+  background-color: rgba(16, 38, 67, 0.05) !important;
+}
+
+.admin-portal-material [class*='bg-white/'] {
+  background-color: rgba(16, 38, 67, 0.04) !important;
+}
+
+.admin-portal-material [class*='border-white/'] {
+  border-color: var(--border) !important;
+}
+
+.admin-portal-material [class*='divide-white/'] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border) !important;
+}
+
+/* Section headings */
+.admin-portal-material h2,
+.admin-portal-material h3,
+.admin-portal-material .font-disp {
+  color: var(--text-main);
+}
+
+/* Recharts */
+.admin-portal-material .recharts-text,
+.admin-portal-material .recharts-cartesian-axis-tick-value {
+  fill: var(--text-dim) !important;
+}
+
+.admin-portal-material .recharts-cartesian-grid line,
+.admin-portal-material .recharts-cartesian-axis-line,
+.admin-portal-material .recharts-cartesian-axis-tick line {
+  stroke: var(--border) !important;
+}
+
+.admin-portal-material .recharts-default-tooltip {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  color: var(--text-main) !important;
+}
+
+/* Tab buttons: inactive label contrast */
+.admin-portal-material button.text-gray-400 {
+  color: var(--text-dim) !important;
+}
+
+.admin-portal-material button.hover\:text-white:hover {
+  color: var(--text-main) !important;
+}
+
+/* Keep white label on filled accent buttons */
+.admin-portal-material button[class*='bg-[var(--accent)]'].text-white,
+.admin-portal-material button[class*='bg-[#'].text-white,
+.admin-portal-material button.bg-red-600.text-white {
+  color: #ffffff !important;
+}

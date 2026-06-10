@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Activity, Brain, Globe, Zap, ArrowRight, Layers, FileDown, History, HeartPulse, Video, MessageSquare, Download, ThumbsUp, FileText } from 'lucide-react';
+import PortalClassicHeader from '../Components/PortalClassicHeader';
 
 export default function PatientLanding() {
   const navigate = useNavigate();
@@ -28,12 +29,7 @@ export default function PatientLanding() {
         <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-[var(--accent)]/10 blur-[120px] rounded-full" />
       </div>
 
-      <nav className="relative z-10 px-8 py-1 flex justify-between items-center max-w-7xl mx-auto w-full">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center font-bold shadow-lg shadow-[var(--accent)]/20 text-white">P</div>
-          <span className="text-xl font-bold tracking-tight">PRISM Patient</span>
-        </div>
-      </nav>
+      <PortalClassicHeader portalLabel="Patient Portal" fallbackPath="/" />
 
       {/* Hero */}
       <section className="relative z-10 px-6 py-1 max-w-7xl mx-auto flex flex-col items-center text-center">

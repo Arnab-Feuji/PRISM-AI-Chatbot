@@ -1,6 +1,9 @@
 import React, { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
+import { useThemeStore } from '../store/theme'
+import PatientLoginMui from './patient/material/PatientLoginMui'
+import AdminLoginMui from './admin/material/AdminLoginMui'
 import { Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -23,12 +26,24 @@ const COUNTRIES = [
 ]
 
 export default function Login() {
-  const [params]  = useSearchParams()
-  const navigate   = useNavigate()
-  const location   = window.location
-  const { login, register, logout } = useAuthStore()
+  const [params] = useSearchParams()
+  const { isMaterialPatient } = useThemeStore()
   const role = params.get('role') || 'patient'
-  const from = window.history.state?.usr?.from || (useAuthStore.getState().user?.role === 'admin' ? '/admin-intro' : '/app')
+
+  if (isMaterialPatient() && role === 'patient') {
+    return <PatientLoginMui />
+  }
+
+  if (isMaterialPatient() && role === 'admin') {
+    return <AdminLoginMui />
+  }
+
+  return <LoginClassic role={role} params={params} />
+}
+
+function LoginClassic({ role, params }) {
+  const navigate = useNavigate()
+  const { login, register, logout } = useAuthStore()
   const [mode, setMode]     = useState(params.get('register') ? 'register' : 'login')
   const [show, setShow]     = useState(false)
   const [loading, setLoading] = useState(false)

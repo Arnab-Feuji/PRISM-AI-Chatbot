@@ -3,18 +3,16 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Shield, Activity, ArrowRight, Palette, Smartphone } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useThemeStore } from '../store/theme';
+import { THEME_PICKER_OPTIONS } from '../themes/material/constants';
 import DeviceSwitcher from '../Components/DeviceSwitcher';
+import PortalClassicHeader from '../Components/PortalClassicHeader';
 
 export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { currentTheme, setTheme } = useThemeStore();
 
-  const themes = [
-    { id: 'black-pink', name: 'WOW Factor', color: 'bg-pink-500' },
-    { id: 'titanium-gold', name: 'Titanium & Gold', color: 'bg-[#D4AF37]' },
-    { id: 'neural-glass', name: 'Natural Glass', color: 'bg-cyan-400' },
-  ];
+  const themes = THEME_PICKER_OPTIONS;
 
   const stats = [
     { value: '5', label: 'Disease Domains' },
@@ -24,7 +22,7 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen h-full bg-[var(--bg-main)] text-[var(--text-main)] flex flex-col font-sans selection:bg-[var(--accent)]/30 transition-colors duration-500 relative">
+    <div className="min-h-screen h-full w-full max-w-[100vw] overflow-x-hidden bg-[var(--bg-main)] text-[var(--text-main)] flex flex-col font-sans selection:bg-[var(--accent)]/30 transition-colors duration-500 relative">
       {/* Background decoration */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[var(--accent)]/10 blur-[120px] rounded-full" />
@@ -32,40 +30,36 @@ export default function Home() {
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay" />
       </div>
 
-      {/* Header */}
-      <header className="relative z-20 px-8 py-3 flex justify-between items-center max-w-7xl mx-auto w-full">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-[var(--grad-primary)] flex items-center justify-center font-bold shadow-lg shadow-[var(--accent)]/20 text-white">P</div>
-          <span className="text-2xl font-bold tracking-tight">PRISM</span>
-        </div>
-        <div className="flex items-center gap-4">
-          {!user ? (
-            <Link to="/login" className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-sm font-semibold">
-              Sign In
-            </Link>
-          ) : (
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-[var(--text-dim)]">Welcome, <b className="text-[var(--text-main)]">{user.name}</b></span>
-              <button onClick={() => navigate(user.role === 'admin' ? '/admin-intro' : '/app')} className="px-5 py-2 rounded-full bg-[var(--accent)] hover:opacity-90 transition-all text-sm font-bold shadow-lg shadow-[var(--accent)]/20 text-white">
-                Go to Dashboard
-              </button>
+      <PortalClassicHeader showBack={false}>
+        {!user ? (
+          <Link to="/login" className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-sm font-semibold whitespace-nowrap">
+            Sign In
+          </Link>
+        ) : (
+          <>
+            <div className="hidden md:block text-right leading-tight">
+              <div className="text-[11px] text-[var(--text-dim)] uppercase tracking-wide">Welcome back</div>
+              <div className="text-sm font-bold text-[var(--text-main)] truncate max-w-[200px]">{user.name}</div>
             </div>
-          )}
-        </div>
-      </header>
+            <button
+              onClick={() => navigate(user.role === 'admin' ? '/admin-intro' : '/app')}
+              className="px-4 sm:px-5 py-2 rounded-full bg-[var(--accent)] hover:opacity-90 transition-all text-sm font-bold shadow-lg shadow-[var(--accent)]/20 text-white whitespace-nowrap"
+            >
+              Dashboard
+            </button>
+          </>
+        )}
+      </PortalClassicHeader>
 
       {/* Hero */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-2 text-center max-w-5xl mx-auto">
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-8 py-2 text-center w-full">
         <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-[var(--accent)] text-[10px] font-bold uppercase tracking-[0.2em] mb-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
           AI-Powered Healthcare Platform · Latin America
         </div>
 
         <h1 className="text-3xl md:text-5xl font-black mb-1 tracking-tight leading-[0.95] text-[var(--text-main)]">
-          One platform.<br />
-          <span className="bg-[var(--grad-primary)] bg-clip-text text-transparent">
-            Two powerful portals.
-          </span>
+          One platform.
         </h1>
 
         <p className="text-gray-400 text-sm md:text-base max-w-xl mb-4 leading-relaxed">
@@ -74,7 +68,7 @@ export default function Home() {
         </p>
 
         {/* Portal Cards */}
-        <div className="grid md:grid-cols-2 gap-4 w-full max-w-4xl">
+        <div className="grid md:grid-cols-2 gap-4 w-full max-w-6xl mx-auto">
           <button
             onClick={() => navigate('/patient')}
             className="group relative text-left p-4 rounded-[20px] bg-[var(--bg-card)] border border-white/10 hover:border-[var(--accent)]/50 transition-all duration-500 overflow-hidden"
@@ -150,7 +144,7 @@ export default function Home() {
                     ${currentTheme === t.id ? 'border-[var(--accent)] scale-110 shadow-lg shadow-[var(--accent)]/30' : 'border-transparent hover:border-white/20'}`}
                   title={t.name}
                 >
-                  <div className={`w-4 h-4 rounded-full ${t.color}`} />
+                  <div className={`w-4 h-4 rounded-full ${t.swatchClass}`} />
                   <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1 rounded-md bg-black text-white text-[9px] font-black opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none uppercase tracking-tighter z-50">
                     {t.name}
                   </div>
