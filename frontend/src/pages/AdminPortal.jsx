@@ -11,7 +11,7 @@ import {
   AlertTriangle, Activity, TrendingUp, Upload, Search, Bell,
   CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, LogOut,
   Shield, Zap, Globe, Brain, Server, Layers, Lock, Download, Info, AlertCircle, Heart,
-  BookOpen, X, Scale, Languages, Eye, Accessibility, Target
+  BookOpen, X, Scale, Languages, Eye, Accessibility, Target, DollarSign
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../services/api'
@@ -134,6 +134,14 @@ const METRIC_DESCS = {
   llm_fallbacks: "Full answers where CDC/PubMed evidence was not found — the LLM responded from its own clinical knowledge.",
   retrieval_total: "Sum of CDC/PubMed retrievals plus LLM fallback full answers. Excludes clarifying questions.",
   llm_interactions_relation: "LLM Interactions counts all tracked LLM API calls (clarifying questions, primary agent, specialist, etc.). It is usually higher than Retrieval Total because each patient turn may invoke multiple LLM calls before a final answer.",
+  llm_total_cost: "Total estimated USD spend across all tracked LLM API calls. Recalculated live from prompt + completion token counts and the current model rate card.",
+  llm_cost_per_call: "Average cost per tracked LLM call: total_cost_usd ÷ total_calls. Each patient turn may trigger multiple calls (primary, specialist, clarifying).",
+  llm_input_cost: "Input (prompt) token cost: (prompt_tokens ÷ 1,000,000) × model input rate ($/MTok).",
+  llm_output_cost: "Output (completion) token cost: (completion_tokens ÷ 1,000,000) × model output rate ($/MTok).",
+  llm_cost_formula: "Cost (USD) = (prompt_tokens ÷ 1,000,000 × input_rate) + (completion_tokens ÷ 1,000,000 × output_rate). Rates are per-model USD per million tokens and refresh on every poll — if provider pricing changes, totals update immediately.",
+  llm_cost_tokens: "Aggregate prompt and completion tokens recorded for each LLM API call in the telemetry log.",
+  llm_cost_by_model: "Spend broken down by LLM model. Each row sums token costs using that model's input/output $/MTok rates.",
+  llm_cost_realtime: "This panel polls the backend every 10 seconds. New LLM calls and pricing updates are reflected without a manual refresh.",
   retrieval: "The ability of the system to find relevant clinical documentation in the Vector Store.",
   generation: "Linguistic and clinical accuracy of the AI responses based on retrieved knowledge.",
   bert_score: "Uses advanced AI to compare the response to a 'gold standard' answer for meaning, not just words.",
@@ -264,6 +272,14 @@ const NAV = [
 
 // ── Sections ───────────────────────────────────────────────────────────────
 
+function formatUsd(value, digits = 6) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  if (n === 0) return '$0.00'
+  if (n < 0.01) return `$${n.toFixed(digits)}`
+  return `$${n.toFixed(4)}`
+}
+
 function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry }) {
   const [activeSubTab, setActiveSubTab] = useState('health')
   const [retrievalTab, setRetrievalTab] = useState('cdc_pubmed')
@@ -271,6 +287,10 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
   const [healthLoading, setHealthLoading] = useState(true)
   const [lastChecked, setLastChecked] = useState(null)
   const [healthError, setHealthError] = useState(null)
+  const [llmCost, setLlmCost] = useState(null)
+  const [llmCostLoading, setLlmCostLoading] = useState(false)
+  const [llmCostError, setLlmCostError] = useState(null)
+  const [llmCostSynced, setLlmCostSynced] = useState(null)
 
   const fetchHealth = async () => {
     setHealthLoading(true)
@@ -286,9 +306,29 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
     }
   }
 
+  const fetchLlmCost = async (quiet = false) => {
+    if (!quiet) setLlmCostLoading(true)
+    setLlmCostError(null)
+    try {
+      const res = await api.get('/admin/llm-cost')
+      setLlmCost(res.data)
+      setLlmCostSynced(new Date())
+    } catch (e) {
+      setLlmCostError('LLM cost telemetry failed — backend unreachable')
+    } finally {
+      if (!quiet) setLlmCostLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetchHealth()
     const interval = setInterval(fetchHealth, 30000) // Poll every 30s
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    fetchLlmCost()
+    const interval = setInterval(() => fetchLlmCost(true), 10000)
     return () => clearInterval(interval)
   }, [])
 
@@ -362,6 +402,13 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
           >
             <Activity size={14} /> Health
           </button>
+          <button
+            onClick={() => setActiveSubTab('llm_cost')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2
+              ${activeSubTab === 'llm_cost' ? 'bg-[#34D399] text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+          >
+            <DollarSign size={14} /> Cost of LLM
+          </button>
         </div>
 
         <div className="hidden lg:flex items-center gap-3 bg-white/5 px-4 py-2 rounded-2xl border border-white/5">
@@ -399,6 +446,197 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
         ))}
       </div>
 
+      {activeSubTab === 'llm_cost' && (
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+            <div className="flex items-center gap-2">
+              <DollarSign size={16} className="text-[#34D399]" />
+              <span className="text-sm font-bold text-[var(--text-main)]">LLM Cost Telemetry</span>
+              <TooltipUI title="Real-time updates" content={METRIC_DESCS.llm_cost_realtime}>
+                <span className="text-[10px] font-mono text-gray-500 cursor-help flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#34D399] animate-pulse" />
+                  Live · 10s poll
+                </span>
+              </TooltipUI>
+            </div>
+            <div className="flex items-center gap-2">
+              {llmCostSynced && (
+                <span className="text-[9px] text-gray-500 font-mono">
+                  Synced: {llmCostSynced.toLocaleTimeString()}
+                </span>
+              )}
+              <button
+                onClick={() => fetchLlmCost()}
+                disabled={llmCostLoading}
+                className="p-2 hover:bg-white/5 rounded-xl transition-all border border-white/5"
+              >
+                <RefreshCw size={14} className={llmCostLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+
+          {llmCostError && (
+            <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 text-xs flex items-center gap-3">
+              <AlertTriangle size={14} /> {llmCostError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricCard
+              label="Total LLM Cost"
+              value={formatUsd(llmCost?.total_cost_usd)}
+              color="#34D399"
+              icon={<DollarSign size={14} />}
+              sub={`${llmCost?.total_calls ?? llmInteractionCount} tracked calls`}
+              tip={METRIC_DESCS.llm_total_cost}
+            />
+            <MetricCard
+              label="Avg Cost / Call"
+              value={formatUsd(llmCost?.avg_cost_per_call_usd)}
+              color="#A78BFA"
+              icon={<Zap size={14} />}
+              sub="Per API invocation"
+              tip={METRIC_DESCS.llm_cost_per_call}
+            />
+            <MetricCard
+              label="Input Token Cost"
+              value={formatUsd(llmCost?.total_input_cost_usd)}
+              color="#60A5FA"
+              icon={<Brain size={14} />}
+              sub={`${(llmCost?.total_prompt_tokens ?? 0).toLocaleString()} prompt tokens`}
+              tip={METRIC_DESCS.llm_input_cost}
+            />
+            <MetricCard
+              label="Output Token Cost"
+              value={formatUsd(llmCost?.total_output_cost_usd)}
+              color="#F472B6"
+              icon={<MessageSquare size={14} />}
+              sub={`${(llmCost?.total_completion_tokens ?? 0).toLocaleString()} completion tokens`}
+              tip={METRIC_DESCS.llm_output_cost}
+            />
+          </div>
+
+          <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5 space-y-4">
+            <TooltipUI title="How LLM cost is calculated" content={METRIC_DESCS.llm_cost_formula}>
+              <div className="cursor-help">
+                <div className="text-sm font-bold text-[var(--text-main)] flex items-center gap-2">
+                  Cost calculation
+                  <Info size={13} className="text-gray-500" />
+                </div>
+                <p className="text-[11px] text-gray-400 mt-2 leading-relaxed max-w-4xl">
+                  {llmCost?.formula || METRIC_DESCS.llm_cost_formula}
+                </p>
+                <p className="text-[10px] text-gray-500 mt-2 font-mono">
+                  Active provider: <span className="text-white">{llmCost?.active_provider || '—'}</span>
+                  {' · '}Default model: <span className="text-white">{llmCost?.active_model || '—'}</span>
+                </p>
+              </div>
+            </TooltipUI>
+
+            <div className="grid lg:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-white/5 bg-black/20 p-4">
+                <TooltipUI title="Cost by model" content={METRIC_DESCS.llm_cost_by_model}>
+                  <div className="text-xs font-bold text-gray-300 mb-3 cursor-help flex items-center gap-1">
+                    By Model <Info size={12} className="text-gray-500" />
+                  </div>
+                </TooltipUI>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {(llmCost?.by_model || []).length === 0 ? (
+                    <div className="text-[11px] text-gray-500 py-4 text-center">No LLM calls logged yet</div>
+                  ) : (
+                    llmCost.by_model.map(row => (
+                      <div key={row.model} className="flex items-center justify-between text-[11px] py-2 border-b border-white/5 last:border-0">
+                        <div>
+                          <div className="font-mono font-bold text-white">{row.model}</div>
+                          <div className="text-gray-500 mt-0.5">
+                            {row.calls} calls · ${row.input_per_mtok}/MTok in · ${row.output_per_mtok}/MTok out
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-black text-[#34D399]">{formatUsd(row.cost_usd)}</div>
+                          <div className="text-[9px] text-gray-500">{(row.prompt_tokens + row.completion_tokens).toLocaleString()} tok</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/5 bg-black/20 p-4">
+                <TooltipUI title="Token usage" content={METRIC_DESCS.llm_cost_tokens}>
+                  <div className="text-xs font-bold text-gray-300 mb-3 cursor-help flex items-center gap-1">
+                    By Route <Info size={12} className="text-gray-500" />
+                  </div>
+                </TooltipUI>
+                <div className="space-y-2">
+                  {(llmCost?.by_route || []).length === 0 ? (
+                    <div className="text-[11px] text-gray-500 py-4 text-center">No route breakdown yet</div>
+                  ) : (
+                    llmCost.by_route.map(row => (
+                      <div key={row.route} className="flex items-center justify-between text-[11px] py-2 border-b border-white/5 last:border-0">
+                        <div className="font-mono font-bold text-white capitalize">{row.route}</div>
+                        <div className="text-right">
+                          <div className="font-black text-[#34D399]">{formatUsd(row.cost_usd)}</div>
+                          <div className="text-[9px] text-gray-500">{row.calls} calls</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/5 overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/5 bg-white/[0.02] text-xs font-bold text-gray-300">
+                Recent LLM calls (cost per invocation)
+              </div>
+              <div className="overflow-x-auto max-h-56 overflow-y-auto">
+                <table className="w-full text-[11px] text-left">
+                  <thead className="bg-bg3 border-b border-white/10 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Agent</th>
+                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Model</th>
+                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Route</th>
+                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Tokens</th>
+                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Cost</th>
+                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {(llmCost?.recent_calls || []).map((c, i) => (
+                      <tr key={i} className="hover:bg-white/5">
+                        <td className="px-3 py-2 font-mono text-teal">{c.agent_id || '—'}</td>
+                        <td className="px-3 py-2 text-ink3">{c.model}</td>
+                        <td className="px-3 py-2 capitalize text-ink3">{c.route}</td>
+                        <td className="px-3 py-2 font-mono text-blue-400">
+                          {(c.prompt_tokens + c.completion_tokens).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 font-mono font-bold text-[#34D399]">{formatUsd(c.cost_usd)}</td>
+                        <td className="px-3 py-2 font-mono text-[10px] text-ink3">
+                          {c.created_at ? formatTime(c.created_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    {(!llmCost?.recent_calls || llmCost.recent_calls.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-8 text-center text-ink3">No LLM calls logged yet</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-gray-500 border-t border-white/5 pt-3 leading-relaxed">
+              <span className="text-gray-300 font-semibold">Aligned with LLM Interactions ({llmInteractionCount}):</span>{' '}
+              Each interaction in the pulse row maps to a tracked API call in telemetry. Cost is derived from recorded prompt and completion tokens multiplied by the current model rate card — totals update automatically when new calls are logged or provider rates change.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'health' && (
+      <>
       {/* Retrieval breakdown tabs */}
       <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -616,6 +854,8 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

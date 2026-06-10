@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import api from "../services/api";
 import {
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
+  ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
 import {
@@ -33,6 +33,74 @@ const IMPACT_LABELS = {
   portal_effectiveness: "Portal Effectiveness",
   both: "Satisfaction & Effectiveness",
 };
+
+const CARD_TIPS = {
+  overall_health: "Composite health score (0–100) blending RAGAS, patient feedback, quality (CQS), escalations, and alerts. Color reflects status: green = healthy, amber = needs attention, red = critical.",
+  portal_effectiveness: "How well the AI portal performs technically for patients. Weighted blend: RAGAS 30%, Clinical Quality Score 25%, escalations 20%, alerts 15%, and feedback 10%. Higher scores mean more reliable, accurate AI responses.",
+  patient_satisfaction: "Perceived patient experience based on ratings, quality scores, and escalation burden. Weighted: feedback 40%, CQS 30%, RAGAS 15%, escalations 15%. Tracks whether patients feel heard and supported.",
+  action_summary: "Count of generated recommendations grouped by urgency. Use this to prioritize admin work for the week.",
+  action_total: "Total actionable recommendations synthesized from all admin data sources in the current period.",
+  action_critical: "Recommendations requiring immediate attention — unresolved critical alerts, severe quality drops, or safety-related issues.",
+  action_high: "Important improvements that should be addressed soon to prevent patient experience or portal performance decline.",
+  action_medium: "Moderate-priority optimizations — address after critical and high items are resolved.",
+  recommendations_by_source: "Bar chart showing how many recommendations originated from each data source (RAGAS, feedback, alerts, escalations, quality, cross-analysis). Helps identify which area needs the most admin focus.",
+  ragas_overall: "Average composite RAGAS score across all AI answer evaluations in the period. Measures retrieval and generation quality of clinical responses.",
+  avg_rating: "Mean star rating from patient feedback submissions. Direct signal of perceived answer helpfulness and empathy.",
+  alerts: "Count of open system alerts (infrastructure, LLM, guardrails). Includes critical items that may affect portal availability or answer quality.",
+  escalations: "Total specialist and human escalations triggered when AI confidence is low or patient frustration is high.",
+  avg_cqs: "Average Clinical Quality Score across monitored patients — combines engagement, adherence signals, and interaction quality.",
+};
+
+function TooltipUI({ title, content, children, inline = false }) {
+  if (!content) return children;
+  const tooltipId = useMemo(() => `tip-${Math.random().toString(36).substr(2, 9)}`, []);
+
+  return (
+    <div
+      className="tooltip-container"
+      id={tooltipId}
+      style={{ position: "relative", display: "inline-block", width: inline ? "auto" : "100%", cursor: "help" }}
+    >
+      <style>{`
+        #${tooltipId}:hover .executive-tooltip {
+          opacity: 1 !important;
+          visibility: visible !important;
+          transform: translateX(-50%) translateY(0) !important;
+        }
+      `}</style>
+      {children}
+      <div
+        className="executive-tooltip"
+        style={{
+          position: "absolute",
+          top: "calc(100% + 12px)",
+          left: "50%",
+          transform: "translateX(-50%) translateY(-10px)",
+          zIndex: 2147483647,
+          width: "280px",
+          padding: "16px",
+          backgroundColor: "var(--bg-card)",
+          border: "1px solid var(--border)",
+          borderRadius: "16px",
+          boxShadow: "0 25px 50px rgba(0,0,0,0.9)",
+          textAlign: "left",
+          pointerEvents: "none",
+          opacity: 0,
+          visibility: "hidden",
+          transition: "all 0.2s ease-out",
+        }}
+      >
+        <div style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", border: "8px solid transparent", borderBottomColor: "#0F172A" }} />
+        <div style={{ fontSize: "9px", fontWeight: "900", color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "6px", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "4px" }}>
+          {title || "Metric Insights"}
+        </div>
+        <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.95)", lineHeight: "1.5", fontWeight: "500" }}>
+          {content}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PriorityBadge({ priority }) {
   const s = PRIORITY_STYLES[priority] || PRIORITY_STYLES.medium;
@@ -192,14 +260,6 @@ export default function AdminRecommendation360() {
     return true;
   });
 
-  const radarData = [
-    { dim: "RAGAS", score: scores.dimension_scores.ragas },
-    { dim: "Feedback", score: scores.dimension_scores.feedback },
-    { dim: "CQS", score: scores.dimension_scores.quality_cqs },
-    { dim: "Escalations", score: scores.dimension_scores.escalations },
-    { dim: "Alerts", score: scores.dimension_scores.alerts },
-  ];
-
   const barData = Object.entries(CATEGORY_META).map(([key, meta]) => ({
     name: meta.label.split(" ")[0],
     count: recommendations.filter((r) => r.category === key).length,
@@ -234,133 +294,136 @@ export default function AdminRecommendation360() {
 
       {/* Score cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-6 flex flex-col items-center relative">
-          <div className="relative">
-            <ScoreRing value={scores.overall_health} label="Overall Health" color={scores.health_color} />
-          </div>
-          <span
-            className="mt-3 text-sm font-black uppercase tracking-wider"
-            style={{ color: scores.health_color }}
-          >
-            {scores.health_label}
-          </span>
-        </div>
-
-        <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Zap size={16} className="text-[#60A5FA]" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)]">
-              Portal Effectiveness
+        <TooltipUI title="Overall Health" content={CARD_TIPS.overall_health}>
+          <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-6 flex flex-col items-center relative">
+            <div className="relative">
+              <ScoreRing value={scores.overall_health} label="Overall Health" color={scores.health_color} />
+            </div>
+            <span
+              className="mt-3 text-sm font-black uppercase tracking-wider"
+              style={{ color: scores.health_color }}
+            >
+              {scores.health_label}
             </span>
           </div>
-          <div className="text-4xl font-black text-[#60A5FA] mb-2">{scores.portal_effectiveness}</div>
-          <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-1000"
-              style={{ width: `${scores.portal_effectiveness}%`, background: "#60A5FA" }}
-            />
-          </div>
-          <p className="text-[10px] text-[var(--text-dim)] mt-3">
-            Weighted: RAGAS 30% · CQS 25% · Escalations 20% · Alerts 15% · Feedback 10%
-          </p>
-        </div>
+        </TooltipUI>
 
-        <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Heart size={16} className="text-[#34D399]" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)]">
-              Patient Satisfaction
-            </span>
+        <TooltipUI title="Portal Effectiveness" content={CARD_TIPS.portal_effectiveness}>
+          <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Zap size={16} className="text-[#60A5FA]" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)]">
+                Portal Effectiveness
+              </span>
+            </div>
+            <div className="text-4xl font-black text-[#60A5FA] mb-2">{scores.portal_effectiveness}</div>
+            <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-1000"
+                style={{ width: `${scores.portal_effectiveness}%`, background: "#60A5FA" }}
+              />
+            </div>
+            <p className="text-[10px] text-[var(--text-dim)] mt-3">
+              Weighted: RAGAS 30% · CQS 25% · Escalations 20% · Alerts 15% · Feedback 10%
+            </p>
           </div>
-          <div className="text-4xl font-black text-[#34D399] mb-2">{scores.patient_satisfaction}</div>
-          <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-1000"
-              style={{ width: `${scores.patient_satisfaction}%`, background: "#34D399" }}
-            />
+        </TooltipUI>
+
+        <TooltipUI title="Patient Satisfaction" content={CARD_TIPS.patient_satisfaction}>
+          <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Heart size={16} className="text-[#34D399]" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)]">
+                Patient Satisfaction
+              </span>
+            </div>
+            <div className="text-4xl font-black text-[#34D399] mb-2">{scores.patient_satisfaction}</div>
+            <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-1000"
+                style={{ width: `${scores.patient_satisfaction}%`, background: "#34D399" }}
+              />
+            </div>
+            <p className="text-[10px] text-[var(--text-dim)] mt-3">
+              Weighted: Feedback 40% · CQS 30% · RAGAS 15% · Escalations 15%
+            </p>
           </div>
-          <p className="text-[10px] text-[var(--text-dim)] mt-3">
-            Weighted: Feedback 40% · CQS 30% · RAGAS 15% · Escalations 15%
-          </p>
-        </div>
+        </TooltipUI>
       </div>
 
       {/* Action summary + charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5">
-          <h3 className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)] mb-4">
-            Action Summary
-          </h3>
+          <div className="flex items-center gap-2 mb-4">
+            <h3 className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)]">
+              Action Summary
+            </h3>
+            <TooltipUI title="Action Summary" content={CARD_TIPS.action_summary} inline>
+              <span className="inline-flex items-center text-[var(--text-dim)] hover:text-[var(--accent)] transition-colors">
+                <Info size={12} />
+              </span>
+            </TooltipUI>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { label: "Total", value: scores.action_summary.total_recommendations, color: "var(--accent)" },
-              { label: "Critical", value: scores.action_summary.critical, color: "#F05252" },
-              { label: "High", value: scores.action_summary.high, color: "#F97316" },
-              { label: "Medium", value: scores.action_summary.medium, color: "#FBBF24" },
+              { label: "Total", value: scores.action_summary.total_recommendations, color: "var(--accent)", tip: CARD_TIPS.action_total },
+              { label: "Critical", value: scores.action_summary.critical, color: "#F05252", tip: CARD_TIPS.action_critical },
+              { label: "High", value: scores.action_summary.high, color: "#F97316", tip: CARD_TIPS.action_high },
+              { label: "Medium", value: scores.action_summary.medium, color: "#FBBF24", tip: CARD_TIPS.action_medium },
             ].map((item) => (
-              <div key={item.label} className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-center">
-                <div className="text-xl font-black" style={{ color: item.color }}>{item.value}</div>
-                <div className="text-[9px] font-bold text-[var(--text-dim)] uppercase">{item.label}</div>
-              </div>
+              <TooltipUI key={item.label} title={item.label} content={item.tip}>
+                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-center h-full">
+                  <div className="text-xl font-black" style={{ color: item.color }}>{item.value}</div>
+                  <div className="text-[9px] font-bold text-[var(--text-dim)] uppercase">{item.label}</div>
+                </div>
+              </TooltipUI>
             ))}
           </div>
         </div>
 
-        <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5">
-          <h3 className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)] mb-2">
-            Dimension Health Radar
-          </h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <RadarChart data={radarData}>
-              <PolarGrid stroke="rgba(255,255,255,0.08)" />
-              <PolarAngleAxis dataKey="dim" tick={{ fill: "var(--text-dim)", fontSize: 10 }} />
-              <Radar
-                dataKey="score" stroke="var(--accent)" fill="var(--accent)"
-                fillOpacity={0.2} strokeWidth={2}
-              />
-            </RadarChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5">
-          <h3 className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)] mb-2">
-            Recommendations by Source
-          </h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={barData} layout="vertical" margin={{ left: 10, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis type="number" tick={{ fill: "var(--text-dim)", fontSize: 10 }} />
-              <YAxis type="category" dataKey="name" tick={{ fill: "var(--text-dim)", fontSize: 9 }} width={70} />
-              <Tooltip
-                contentStyle={{ background: "var(--bg-card)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 11 }}
-              />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {barData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <TooltipUI title="Recommendations by Source" content={CARD_TIPS.recommendations_by_source}>
+          <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5">
+            <h3 className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-dim)] mb-2">
+              Recommendations by Source
+            </h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={barData} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis type="number" tick={{ fill: "var(--text-dim)", fontSize: 10 }} />
+                <YAxis type="category" dataKey="name" tick={{ fill: "var(--text-dim)", fontSize: 9 }} width={70} />
+                <Tooltip
+                  contentStyle={{ background: "var(--bg-card)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 11 }}
+                />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                  {barData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </TooltipUI>
       </div>
 
       {/* Source snapshots */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
-          { label: "RAGAS Overall", value: `${snap.ragas.overall}%`, sub: `${snap.ragas.total_evaluations} evals`, icon: TrendingUp, color: "#EC4899" },
-          { label: "Avg Rating", value: `${snap.feedback.average_rating}/5`, sub: `${snap.feedback.total_ratings} ratings`, icon: MessageSquare, color: "#34D399" },
-          { label: "Unresolved Alerts", value: snap.alerts.unresolved, sub: `${snap.alerts.critical} critical`, icon: Bell, color: "#F05252" },
-          { label: "Escalations", value: snap.escalations.total, sub: `${snap.escalations.human} human`, icon: Activity, color: "#F97316" },
-          { label: "Avg CQS", value: snap.quality.avg_cqs, sub: `${snap.quality.active_patients} patients`, icon: Shield, color: "#60A5FA" },
+          { label: "RAGAS Overall", value: `${snap.ragas.overall}%`, sub: `${snap.ragas.total_evaluations} evals`, icon: TrendingUp, color: "#EC4899", tip: CARD_TIPS.ragas_overall },
+          { label: "Avg Rating", value: `${snap.feedback.average_rating}/5`, sub: `${snap.feedback.total_ratings} ratings`, icon: MessageSquare, color: "#34D399", tip: CARD_TIPS.avg_rating },
+          { label: "Alerts", value: snap.alerts.unresolved, sub: `${snap.alerts.critical} critical`, icon: Bell, color: "#F05252", tip: CARD_TIPS.alerts },
+          { label: "Escalations", value: snap.escalations.total, sub: `${snap.escalations.human} human`, icon: Activity, color: "#F97316", tip: CARD_TIPS.escalations },
+          { label: "Avg CQS", value: snap.quality.avg_cqs, sub: `${snap.quality.active_patients} patients`, icon: Shield, color: "#60A5FA", tip: CARD_TIPS.avg_cqs },
         ].map((item) => {
           const Icon = item.icon;
           return (
-            <div key={item.label} className="bg-[var(--bg-card)] border border-white/5 rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Icon size={14} style={{ color: item.color }} />
-                <span className="text-[9px] font-bold text-[var(--text-dim)] uppercase">{item.label}</span>
+            <TooltipUI key={item.label} title={item.label} content={item.tip}>
+              <div className="bg-[var(--bg-card)] border border-white/5 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon size={14} style={{ color: item.color }} />
+                  <span className="text-[9px] font-bold text-[var(--text-dim)] uppercase">{item.label}</span>
+                </div>
+                <div className="text-lg font-black" style={{ color: item.color }}>{item.value}</div>
+                <div className="text-[9px] text-[var(--text-dim)]">{item.sub}</div>
               </div>
-              <div className="text-lg font-black" style={{ color: item.color }}>{item.value}</div>
-              <div className="text-[9px] text-[var(--text-dim)]">{item.sub}</div>
-            </div>
+            </TooltipUI>
           );
         })}
       </div>

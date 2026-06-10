@@ -2379,6 +2379,12 @@ async def admin_llm_calls(limit: int = 100, current: dict = Depends(require_admi
     } for c in calls]
 
 
+@app.get("/api/admin/llm-cost")
+async def admin_llm_cost(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from backend.core.admin.admin_metrics import get_llm_cost
+    return await get_llm_cost(db)
+
+
 @app.get("/api/admin/user-query-sources")
 async def admin_user_query_sources(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     from backend.database.models import User, Conversation, Message

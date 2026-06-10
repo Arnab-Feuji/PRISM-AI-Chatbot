@@ -411,6 +411,115 @@ async def get_llm_calls(db, days=HISTORY_DAYS) -> Dict:
     }
 
 
+async def get_llm_cost(db, days: Optional[int] = None) -> Dict:
+    """
+    Aggregate LLM spend from tracked llm_call system alerts.
+    Recomputes from current pricing on every call (real-time rate updates).
+  """
+    from sqlalchemy import select
+    from backend.database.models import SystemAlert
+    from backend.config.settings import get_settings
+    from backend.core.admin.llm_pricing import compute_call_cost, cost_formula_description, pricing_catalog
+
+    q = (
+        select(SystemAlert)
+        .where(SystemAlert.component == "llm_call")
+        .order_by(SystemAlert.created_at.desc())
+    )
+    if days is not None:
+        q = q.where(SystemAlert.created_at >= _cutoff(days))
+
+    res = await db.execute(q.limit(5000))
+    alerts = res.scalars().all()
+
+    settings = get_settings()
+    total_cost = total_input_cost = total_output_cost = 0.0
+    total_prompt = total_completion = 0
+    by_model: Dict[str, Dict] = {}
+    by_route: Dict[str, Dict] = {}
+    recent = []
+
+    for a in alerts:
+        try:
+            d = json.loads(a.message)
+        except Exception:
+            continue
+
+        model = d.get("model") or settings.llm_model
+        p_tok = int(d.get("prompt_tokens") or 0)
+        c_tok = int(d.get("completion_tokens") or 0)
+        route = d.get("route", "primary")
+        cost_row = compute_call_cost(model, p_tok, c_tok)
+
+        total_cost += cost_row["cost_usd"]
+        total_input_cost += cost_row["input_cost_usd"]
+        total_output_cost += cost_row["output_cost_usd"]
+        total_prompt += p_tok
+        total_completion += c_tok
+
+        m_key = model or "unknown"
+        if m_key not in by_model:
+            by_model[m_key] = {
+                "model": m_key,
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost_usd": 0.0,
+                "input_per_mtok": cost_row["input_per_mtok"],
+                "output_per_mtok": cost_row["output_per_mtok"],
+            }
+        by_model[m_key]["calls"] += 1
+        by_model[m_key]["prompt_tokens"] += p_tok
+        by_model[m_key]["completion_tokens"] += c_tok
+        by_model[m_key]["cost_usd"] += cost_row["cost_usd"]
+
+        if route not in by_route:
+            by_route[route] = {"route": route, "calls": 0, "cost_usd": 0.0}
+        by_route[route]["calls"] += 1
+        by_route[route]["cost_usd"] += cost_row["cost_usd"]
+
+        if len(recent) < 20:
+            recent.append({
+                "agent_id": d.get("agent_id", ""),
+                "model": m_key,
+                "route": route,
+                "prompt_tokens": p_tok,
+                "completion_tokens": c_tok,
+                "cost_usd": cost_row["cost_usd"],
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            })
+
+    total_calls = len(alerts)
+    avg_per_call = (total_cost / total_calls) if total_calls else 0.0
+
+    models_out = sorted(by_model.values(), key=lambda x: x["cost_usd"], reverse=True)
+    for m in models_out:
+        m["cost_usd"] = round(m["cost_usd"], 6)
+    routes_out = sorted(by_route.values(), key=lambda x: x["cost_usd"], reverse=True)
+    for r in routes_out:
+        r["cost_usd"] = round(r["cost_usd"], 6)
+
+    return {
+        "total_calls": total_calls,
+        "total_cost_usd": round(total_cost, 6),
+        "total_input_cost_usd": round(total_input_cost, 6),
+        "total_output_cost_usd": round(total_output_cost, 6),
+        "avg_cost_per_call_usd": round(avg_per_call, 6),
+        "total_prompt_tokens": total_prompt,
+        "total_completion_tokens": total_completion,
+        "total_tokens": total_prompt + total_completion,
+        "by_model": models_out,
+        "by_route": routes_out,
+        "recent_calls": recent,
+        "formula": cost_formula_description(),
+        "pricing_catalog": pricing_catalog(),
+        "active_provider": settings.llm_provider,
+        "active_model": settings.llm_model,
+        "period_days": days,
+        "refreshed_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 5. ESCALATIONS
 # ══════════════════════════════════════════════════════════════════════════════
