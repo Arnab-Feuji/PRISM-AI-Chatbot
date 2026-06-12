@@ -36,6 +36,7 @@ from backend.core.history.chat_history import (
     get_history_stats,
     start_cleanup_scheduler,
     HISTORY_DAYS,
+    _format_timestamp,
 )
 from backend.core.conversation.intent_engine import (
     process_conversational_turn,
@@ -526,6 +527,7 @@ async def get_messages(conv_id: str, current: dict = Depends(get_current_user), 
     return [{"id": m.id, "role": m.role, "content": m.content,
              "agent_id": m.agent_id, "confidence": m.confidence,
              "citations": m.citations, "created_at": m.created_at.isoformat(),
+             "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
              "follow_up_questions": m.follow_up_questions, "generic_support": m.generic_support,
              "response_format": m.response_format, "intent": m.intent, "visual_payload": m.visual_payload} for m in msgs]
 
@@ -557,6 +559,7 @@ async def get_last_active_conversation(current: dict = Depends(get_current_user)
             "id": m.id, "role": m.role, "content": m.content,
             "agent_id": m.agent_id, "confidence": m.confidence,
             "citations": m.citations, "created_at": m.created_at.isoformat(),
+            "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
             "follow_up_questions": m.follow_up_questions,
             "generic_support": m.generic_support,
             "response_format": m.response_format,
@@ -597,6 +600,7 @@ async def resume_agent_conversation(agent_id: str, current: dict = Depends(get_c
             "id": m.id, "role": m.role, "content": m.content,
             "agent_id": m.agent_id, "confidence": m.confidence,
             "citations": m.citations, "created_at": m.created_at.isoformat(),
+            "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
             "follow_up_questions": m.follow_up_questions,
             "generic_support": m.generic_support,
             "response_format": m.response_format,
@@ -2157,13 +2161,27 @@ async def admin_ragas(current: dict = Depends(require_admin), db: AsyncSession =
 
 @app.get("/api/admin/feedback")
 async def admin_feedback(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    res = await db.execute(select(PatientFeedback).order_by(desc(PatientFeedback.created_at)).limit(100))
-    fbs = res.scalars().all()
-    return [{"id": f.id, "user_id": f.user_id, "rating": f.rating or 0,
-             "helpful": getattr(f, "helpful", True), "accurate": getattr(f, "accurate", True),
-             "agent_id": f.agent_id or "??", "disease_code": f.disease_code or "??",
-             "comment": f.comment or "", "tags": getattr(f, "tags", []),
-             "created_at": f.created_at.isoformat() if f.created_at else datetime.utcnow().isoformat()} for f in fbs]
+    res = await db.execute(
+        select(PatientFeedback, User.name, User.email)
+        .outerjoin(User, User.id == PatientFeedback.user_id)
+        .order_by(desc(PatientFeedback.created_at))
+        .limit(100)
+    )
+    rows = res.all()
+    return [{
+        "id": f.id,
+        "user_id": f.user_id,
+        "user_name": (user_name or user_email or "Unknown"),
+        "patient_name": (user_name or user_email or "Unknown"),
+        "rating": f.rating or 0,
+        "helpful": getattr(f, "helpful", True),
+        "accurate": getattr(f, "accurate", True),
+        "agent_id": f.agent_id or "??",
+        "disease_code": f.disease_code or "??",
+        "comment": f.comment or "",
+        "tags": getattr(f, "tags", []),
+        "created_at": f.created_at.isoformat() if f.created_at else datetime.utcnow().isoformat(),
+    } for f, user_name, user_email in rows]
 
 @app.get("/api/admin/scorecard")
 @app.get("/api/admin/responsible-ai/scorecard")
@@ -2178,19 +2196,18 @@ async def admin_responsible_ai_scorecard(
         logger.exception("Responsible AI scorecard failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Scorecard load failed: {exc}")
 
-@app.get("/api/admin/recommendations-360")
-@app.get("/api/admin/recommendations/360")
-async def admin_recommendations_360(
+@app.get("/api/admin/enhancement-roadmap")
+async def admin_enhancement_roadmap(
     days: int = 15,
     current: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    from backend.core.admin.recommendations import get_recommendations_360
+    from backend.core.admin.enhancement_roadmap import get_enhancement_roadmap
     try:
-        return await get_recommendations_360(db, days=min(days, 15))
+        return await get_enhancement_roadmap(db, days=min(days, 15))
     except Exception as exc:
-        logger.exception("360 recommendations failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Recommendations load failed: {exc}")
+        logger.exception("Enhancement roadmap failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Enhancement roadmap load failed: {exc}")
 
 @app.get("/api/admin/alerts")
 async def admin_alerts(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
@@ -2211,7 +2228,26 @@ async def admin_resolve_alert(alert_id: str, current: dict = Depends(require_adm
 
 @app.get("/api/admin/quality/summary")
 async def admin_quality_summary(days: int = 15, current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, func
+    from backend.database.models import Conversation
+    from backend.core.admin.admin_metrics import get_quality_summary
 
+    refreshed_at = datetime.utcnow().isoformat()
+
+    conv_res = await db.execute(select(func.count(Conversation.id)))
+    unique_conversations = int(conv_res.scalar() or 0)
+
+    overall_summary = await get_quality_summary(db, days=3650)
+    live_dimensions = overall_summary.get("dimensions") or {}
+    overall_cqs = overall_summary.get("avg_cqs") or 0
+    active_patients = overall_summary.get("active_patients") or 0
+
+    if not live_dimensions:
+        live_dimensions = {
+            "engagement": 0, "response_quality": 0, "clinical_safety": 0,
+            "session_flow": 0, "format_variety": 0, "velocity": 0,
+        }
 
     # 5 Diseases, each with 6 unique or shared agents
     disease_agents = {
@@ -2227,7 +2263,6 @@ async def admin_quality_summary(days: int = 15, current: dict = Depends(require_
     overall_E = 0; overall_R = 0; overall_C = 0; overall_S = 0; overall_F = 0; overall_V = 0
     count = 0
     
-    from datetime import datetime, timedelta
     for i in range(days):
         date_str = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
         for d, agents in disease_agents.items():
@@ -2263,16 +2298,35 @@ async def admin_quality_summary(days: int = 15, current: dict = Depends(require_
     # Reset random to not affect other parts
     random.seed()
     
+    matrix_dimensions = {
+        "engagement": round(overall_E / max(count, 1), 1),
+        "response_quality": round(overall_R / max(count, 1), 1),
+        "clinical_safety": round(overall_C / max(count, 1), 1),
+        "session_flow": round(overall_S / max(count, 1), 1),
+        "format_variety": round(overall_F / max(count, 1), 1),
+        "velocity": round(overall_V / max(count, 1), 1),
+    }
+
+    if not overall_cqs and live_dimensions:
+        overall_cqs = round(
+            live_dimensions.get("engagement", 0) * 0.30
+            + live_dimensions.get("response_quality", 0) * 0.25
+            + live_dimensions.get("clinical_safety", 0) * 0.20
+            + live_dimensions.get("session_flow", 0) * 0.15
+            + live_dimensions.get("format_variety", 0) * 0.07
+            + live_dimensions.get("velocity", 0) * 0.03,
+            1,
+        )
+
     return {
-        "dimensions": {
-            "engagement": round(overall_E / max(count, 1), 1),
-            "response_quality": round(overall_R / max(count, 1), 1),
-            "clinical_safety": round(overall_C / max(count, 1), 1),
-            "session_flow": round(overall_S / max(count, 1), 1),
-            "format_variety": round(overall_F / max(count, 1), 1),
-            "velocity": round(overall_V / max(count, 1), 1)
-        },
-        "matrix": matrix
+        "dimensions": live_dimensions if any(live_dimensions.values()) else matrix_dimensions,
+        "matrix_dimensions": matrix_dimensions,
+        "overall_cqs": overall_cqs,
+        "unique_conversations": unique_conversations,
+        "active_patients": active_patients,
+        "refreshed_at": refreshed_at,
+        "period_days": days,
+        "matrix": matrix,
     }
 
 @app.get("/api/admin/prerag/report")
@@ -2550,11 +2604,16 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
         
         # Primary disease domain (disease code)
         disease_code = "DM" # default
+        last_activity = u.created_at
+        if u.last_login and (not last_activity or u.last_login > last_activity):
+            last_activity = u.last_login
         if convs:
-            last_conv = sorted(convs, key=lambda x: x.updated_at, reverse=True)[0]
+            last_conv = sorted(convs, key=lambda x: x.updated_at or datetime.min, reverse=True)[0]
             if last_conv.disease_code in diseases:
                 disease_code = last_conv.disease_code
-                
+            if last_conv.updated_at and (not last_activity or last_conv.updated_at > last_activity):
+                last_activity = last_conv.updated_at
+
         user_results.append({
             "user_id": u.id,
             "name": u.name,
@@ -2568,7 +2627,8 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
             "sentiment_score": sentiment_score,
             "sentiment_category": category,
             "intervention_required": intervention_required,
-            "timestamp": u.created_at.strftime("%Y-%m-%d %H:%M:%S") if u.created_at else None
+            "timestamp": last_activity.strftime("%Y-%m-%d %H:%M:%S") if last_activity else None,
+            "last_activity_at": last_activity.isoformat() if last_activity else None,
         })
         
     # Calculate disease wise aggregations (registered patients only — no mock overlay)
@@ -2608,6 +2668,13 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
     reassured_count = sum(1 for u in user_results if u["sentiment_category"] == "Clinically Reassured")
     intervention_count = sum(1 for u in user_results if u["intervention_required"])
     
+    # Table shows the 10 most recently active patients
+    user_results.sort(
+        key=lambda x: x.get("last_activity_at") or "",
+        reverse=True,
+    )
+    user_specific_recent = user_results[:10]
+
     return {
         "overall_stats": {
             "total_patients": total_patients,
@@ -2618,7 +2685,7 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
             "intervention_count": intervention_count
         },
         "disease_wise": disease_wise,
-        "user_specific": user_results
+        "user_specific": user_specific_recent,
     }
 
 

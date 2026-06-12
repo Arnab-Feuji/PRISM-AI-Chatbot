@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Shield, Activity, ArrowRight, Palette, Smartphone } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useThemeStore } from '../store/theme';
@@ -7,8 +7,19 @@ import DeviceSwitcher from '../Components/DeviceSwitcher';
 
 export default function Home() {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
+  const { user, token } = useAuthStore();
   const { currentTheme, setTheme } = useThemeStore();
+
+  const isPatientLoggedIn = Boolean(token && user && user.role !== 'admin');
+
+  const handleGoToDashboard = () => {
+    if (isPatientLoggedIn) return;
+    if (!token || !user) {
+      navigate('/login?role=admin');
+      return;
+    }
+    navigate('/admin-intro');
+  };
 
   const themes = [
     { id: 'black-pink', name: 'WOW Factor', color: 'bg-pink-500' },
@@ -38,20 +49,18 @@ export default function Home() {
           <div className="w-9 h-9 rounded-xl bg-[var(--grad-primary)] flex items-center justify-center font-bold shadow-lg shadow-[var(--accent)]/20 text-white">P</div>
           <span className="text-2xl font-bold tracking-tight">PRISM</span>
         </div>
-        <div className="flex items-center gap-4">
-          {!user ? (
-            <Link to="/login" className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-sm font-semibold">
-              Sign In
-            </Link>
-          ) : (
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-[var(--text-dim)]">Welcome, <b className="text-[var(--text-main)]">{user.name}</b></span>
-              <button onClick={() => navigate(user.role === 'admin' ? '/admin-intro' : '/app')} className="px-5 py-2 rounded-full bg-[var(--accent)] hover:opacity-90 transition-all text-sm font-bold shadow-lg shadow-[var(--accent)]/20 text-white">
-                Go to Dashboard
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          onClick={handleGoToDashboard}
+          disabled={isPatientLoggedIn}
+          title={isPatientLoggedIn ? 'Admin dashboard is not available while signed in as a patient' : 'Go to admin dashboard'}
+          className={`px-5 py-2 rounded-full transition-all text-sm font-bold text-white
+            ${isPatientLoggedIn
+              ? 'bg-white/10 text-gray-500 cursor-not-allowed opacity-50 shadow-none'
+              : 'bg-[var(--accent)] hover:opacity-90 shadow-lg shadow-[var(--accent)]/20'
+            }`}
+        >
+          Go to Dashboard
+        </button>
       </header>
 
       {/* Hero */}

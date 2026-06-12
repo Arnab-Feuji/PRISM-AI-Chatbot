@@ -25,6 +25,8 @@ HISTORY_DAYS      = 15       # Retention window in days
 SNIPPET_LENGTH    = 120      # Characters for conversation preview snippet
 MAX_HISTORY_ITEMS = 200      # Max conversations returned in one history call
 TITLE_MAX_WORDS   = 8        # Max words in auto-generated conversation title
+TOPIC_LABEL_MAX_WORDS = 5    # Short semantic caption (distinct from starting line)
+TOPIC_SIMILARITY_THRESHOLD = 0.78  # Cosine similarity to merge paraphrased topics
 
 # ─── Disease metadata (mirrors frontend) ──────────────────────────────────────
 DISEASE_META: Dict[str, Dict] = {
@@ -78,15 +80,22 @@ AGENT_META: Dict[str, Dict] = {
 # SECTION 1 — TITLE & SNIPPET GENERATORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _clean_first_message(first_user_message: str) -> str:
+    """Normalize first user message (strip voice/image markers and excess whitespace)."""
+    text = re.sub(r'\[VOICE\]\s*', '', first_user_message or "")
+    text = re.sub(r'\[IMAGE:.*?\]\s*', '', text)
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'#+\s+', '', text)
+    text = re.sub(r'\n+', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
 def generate_conversation_title(first_user_message: str) -> str:
     """
     Generate a short, readable title from the first user message.
     Strips voice/image markers, truncates to TITLE_MAX_WORDS words.
     """
-    # Remove markers like [VOICE], [IMAGE: ...], [VOICE] prefix
-    text = re.sub(r'\[VOICE\]\s*', '', first_user_message)
-    text = re.sub(r'\[IMAGE:.*?\]\s*', '', text)
-    text = text.strip()
+    text = _clean_first_message(first_user_message)
 
     if not text:
         return "New Conversation"
@@ -103,6 +112,45 @@ def generate_conversation_title(first_user_message: str) -> str:
     if last_word in {"the", "a", "an", "in", "on", "at", "of", "for", "with", "about"}:
         title = " ".join(words[:TITLE_MAX_WORDS - 1])
     return title + "…"
+
+
+def generate_topic_label(first_user_message: str) -> str:
+    """
+    Short semantic topic caption for the history table.
+    Strips conversational filler so the label reads differently from the starting line.
+    """
+    text = _clean_first_message(first_user_message)
+    if not text:
+        return "General inquiry"
+
+    text = re.sub(
+        r'^(hi|hello|hey|good morning|good afternoon|good evening)[,!\s]+',
+        '',
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r'^(can you|could you|please|i want to|i need to|i would like to|'
+        r'tell me|help me|explain|what is|what are|what\'s|how do i|how can i|how to)\s+',
+        '',
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = text.lstrip("?!.,").strip()
+    if not text:
+        return "General inquiry"
+
+    words = text.split()
+    if len(words) > TOPIC_LABEL_MAX_WORDS:
+        text = " ".join(words[:TOPIC_LABEL_MAX_WORDS])
+        last_word = words[TOPIC_LABEL_MAX_WORDS - 1].lower()
+        if last_word in {"the", "a", "an", "in", "on", "at", "of", "for", "with", "about", "my"}:
+            text = " ".join(words[:TOPIC_LABEL_MAX_WORDS - 1])
+
+    label = text.rstrip("?!.…").strip()
+    if not label:
+        return "General inquiry"
+    return label[0].upper() + label[1:] if len(label) > 1 else label.upper()
 
 
 def generate_snippet(last_ai_message: str) -> str:
@@ -129,12 +177,7 @@ def generate_starting_line(first_user_message: str) -> str:
     """
     ChatGPT-style opening line: clean first user message, truncated for quick recall.
     """
-    text = re.sub(r'\[VOICE\]\s*', '', first_user_message or "")
-    text = re.sub(r'\[IMAGE:.*?\]\s*', '', text)
-    text = re.sub(r'\*+', '', text)
-    text = re.sub(r'#+\s+', '', text)
-    text = re.sub(r'\n+', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = _clean_first_message(first_user_message)
     if not text:
         return "New conversation"
     if len(text) <= STARTING_LINE_LENGTH:
@@ -235,6 +278,93 @@ def group_by_topic(cards: List[Dict], threshold: float = 0.82) -> Dict[str, List
             
     # Convert back to expected dict format
     return {t["label"]: t["cards"] for t in topics}
+
+
+def _pick_cluster_label(members: List[Dict]) -> str:
+    """Choose one readable caption for a semantically similar group of conversations."""
+    custom = [m for m in members if m.get("custom_label")]
+    if custom:
+        custom.sort(key=lambda m: m.get("created_at") or datetime.min)
+        return custom[0]["custom_label"]
+    members_sorted = sorted(members, key=lambda m: m.get("created_at") or datetime.min)
+    return generate_topic_label(members_sorted[0].get("text") or "")
+
+
+def assign_semantic_topic_labels(
+    items: List[Dict],
+    threshold: float = TOPIC_SIMILARITY_THRESHOLD,
+) -> Dict[str, str]:
+    """
+    Group conversations by semantic similarity of their first message (scoped per disease+agent)
+    and return a shared topic caption per conversation_id.
+    """
+    if not items:
+        return {}
+
+    from backend.core.rag.pipeline import get_embedder
+    import numpy as np
+
+    conv_to_label: Dict[str, str] = {}
+    by_scope: Dict[tuple, List[Dict]] = {}
+    for item in items:
+        scope = item.get("scope") or ("", "")
+        by_scope.setdefault(scope, []).append(item)
+
+    for scope_items in by_scope.values():
+        if len(scope_items) == 1:
+            only = scope_items[0]
+            label = only.get("custom_label") or generate_topic_label(only.get("text") or "")
+            conv_to_label[only["conversation_id"]] = label
+            continue
+
+        texts = [_clean_first_message(i.get("text") or "") or "general inquiry" for i in scope_items]
+        try:
+            embedder = get_embedder()
+            embeddings = embedder.encode(texts, show_progress_bar=False)
+            clusters: List[Dict[str, Any]] = []
+
+            for idx, item in enumerate(scope_items):
+                emb = embeddings[idx]
+                assigned = False
+                for cluster in clusters:
+                    sim = np.dot(emb, cluster["embedding"]) / (
+                        np.linalg.norm(emb) * np.linalg.norm(cluster["embedding"])
+                    )
+                    if sim >= threshold:
+                        cluster["members"].append(item)
+                        assigned = True
+                        break
+                if not assigned:
+                    clusters.append({
+                        "embedding": emb,
+                        "members": [item],
+                    })
+
+            for cluster in clusters:
+                label = _pick_cluster_label(cluster["members"])
+                for member in cluster["members"]:
+                    conv_to_label[member["conversation_id"]] = label
+
+        except Exception as e:
+            print(f"[HISTORY_TOPIC_CLUSTER_ERROR] Fallback to fuzzy matching: {e}")
+            clusters: Dict[str, List[Dict]] = {}
+            for item in scope_items:
+                text = _clean_first_message(item.get("text") or "").lower()
+                assigned = False
+                for cluster_text, members in clusters.items():
+                    similarity = difflib.SequenceMatcher(None, text, cluster_text).ratio()
+                    if similarity >= 0.72:
+                        members.append(item)
+                        assigned = True
+                        break
+                if not assigned:
+                    clusters[text or "general inquiry"] = [item]
+            for members in clusters.values():
+                label = _pick_cluster_label(members)
+                for member in members:
+                    conv_to_label[member["conversation_id"]] = label
+
+    return conv_to_label
 
 
 def format_topics(grouped_cards: Dict[str, List[Dict]]) -> List[Dict]:
@@ -540,13 +670,14 @@ async def get_conversation_messages(
     msg_list = []
     for m in messages:
         entry = {
-            "id":         m.id,
-            "role":       m.role,
-            "content":    m.content,
-            "agent_id":   (m.agent_id or "").upper(),
-            "created_at": _utc_iso(m.created_at),
-            "is_voice":   m.content.startswith("[VOICE]") if m.content else False,
-            "is_image":   m.content.startswith("[IMAGE:") if m.content else False,
+            "id":              m.id,
+            "role":            m.role,
+            "content":         m.content,
+            "agent_id":        (m.agent_id or "").upper(),
+            "created_at":      _utc_iso(m.created_at),
+            "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
+            "is_voice":        m.content.startswith("[VOICE]") if m.content else False,
+            "is_image":        m.content.startswith("[IMAGE:") if m.content else False,
         }
         if include_metadata and m.role == "assistant":
             entry.update({
@@ -801,54 +932,32 @@ async def get_topic_history(
     )
     first_msgs = {m.conversation_id: m for m in first_msg_res.scalars().all()}
 
-    # Build raw topic labels (custom or auto-generated summary)
-    raw_labels = []
+    # Semantic topic labels: cluster paraphrased first messages under one caption per scope
+    cluster_inputs = []
     for conv in conversations:
         first_msg = first_msgs.get(conv.id)
         raw_content = first_msg.content if first_msg else conv.title or ""
-        if conv.topic_label and conv.topic_label.strip():
-            raw_labels.append(conv.topic_label.strip())
-        else:
-            raw_labels.append(generate_conversation_title(raw_content))
+        aid = (conv.agent_id or "").upper()
+        dc  = (conv.disease_code or aid[:2] or "").upper()
+        scope = (dc, aid)
+        custom = (conv.topic_label or "").strip()
+        cluster_inputs.append({
+            "conversation_id": conv.id,
+            "text":            raw_content,
+            "scope":           scope,
+            "custom_label":    custom or None,
+            "created_at":      conv.created_at,
+        })
 
-    # Unique labels scoped per disease + agent
-    used_labels_by_scope: Dict[tuple, set] = {}
-    unique_labels = []
-    for i, conv in enumerate(conversations):
-        scope = ((conv.disease_code or (conv.agent_id or "")[:2] or "").upper(), (conv.agent_id or "").upper())
-        if scope not in used_labels_by_scope:
-            used_labels_by_scope[scope] = set()
-
-        if conv.topic_label and conv.topic_label.strip():
-            label = conv.topic_label.strip()
-            unique_labels.append(label)
-            used_labels_by_scope[scope].add(label.lower())
-        else:
-            label = raw_labels[i]
-            base  = label
-            counter = 2
-            while label.lower() in used_labels_by_scope[scope]:
-                label = f"{base} ({counter})"
-                counter += 1
-            used_labels_by_scope[scope].add(label.lower())
-            unique_labels.append(label)
-
-    # Semantic clustering within current result set
-    cards_for_cluster = [
-        {"conversation_id": conv.id, "title": unique_labels[i]}
-        for i, conv in enumerate(conversations)
-    ]
-    clustered = group_by_topic(cards_for_cluster)
-    conv_to_cluster: Dict[str, str] = {}
-    for cluster_label, cluster_cards in clustered.items():
-        for cc in cluster_cards:
-            conv_to_cluster[cc["conversation_id"]] = cluster_label
+    conv_to_topic = assign_semantic_topic_labels(cluster_inputs)
+    unique_cluster_labels = set(conv_to_topic.values())
 
     topics = []
-    for i, conv in enumerate(conversations):
+    for conv in conversations:
         first_msg = first_msgs.get(conv.id)
         raw_content = first_msg.content if first_msg else conv.title or ""
         starting_line = generate_starting_line(raw_content)
+        topic_label = conv_to_topic.get(conv.id) or generate_topic_label(raw_content)
         ts = conv.created_at
         aid = (conv.agent_id or "").upper()
         dc  = (conv.disease_code or aid[:2] or "").upper()
@@ -858,9 +967,9 @@ async def get_topic_history(
         topics.append({
             "conversation_id":  conv.id,
             "first_message_id": first_msg.id if first_msg else None,
-            "topic":            unique_labels[i],
+            "topic":            topic_label,
             "topic_custom":     bool(conv.topic_label and conv.topic_label.strip()),
-            "cluster_label":    conv_to_cluster.get(conv.id, unique_labels[i]),
+            "cluster_label":    topic_label,
             "timestamp":        _utc_iso(ts),
             "timestamp_label":  _format_timestamp(ts),
             "starting_line":    starting_line,
@@ -882,7 +991,7 @@ async def get_topic_history(
         "agent_name":    AGENT_META.get(agent_id or "", {}).get("name"),
         "topics":        topics,
         "total":         len(topics),
-        "clusters":      len(clustered),
+        "clusters":      len(unique_cluster_labels),
         "filters":       filters,
     }
 
@@ -898,10 +1007,7 @@ async def rename_conversation_topic(
     new_label:       str,
     db,
 ) -> Dict:
-    """
-    Rename a conversation topic. Labels must be unique within the same
-    disease + agent scope for this user.
-    """
+    """Rename a conversation topic (stored per conversation; similar chats share labels on refresh)."""
     from sqlalchemy import select
     from backend.database.models import Conversation
 
@@ -920,26 +1026,6 @@ async def rename_conversation_topic(
     conv = conv_res.scalar_one_or_none()
     if not conv:
         return {"success": False, "error": "Conversation not found."}
-
-    # Uniqueness check within disease + agent
-    dup_res = await db.execute(
-        select(Conversation).where(
-            Conversation.user_id      == user_id,
-            Conversation.disease_code == conv.disease_code,
-            Conversation.agent_id     == conv.agent_id,
-            Conversation.id           != conversation_id,
-        )
-    )
-    existing = dup_res.scalars().all()
-    for other in existing:
-        other_label = (other.topic_label or "").strip()
-        if not other_label:
-            continue
-        if other_label.lower() == new_label.lower():
-            return {
-                "success": False,
-                "error": f'Topic name "{new_label}" is already used. Please choose a unique name.',
-            }
 
     conv.topic_label = new_label
     await db.commit()

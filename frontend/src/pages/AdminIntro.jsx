@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, ShieldCheck, Layers, MessageSquare, 
   UploadCloud, Brain, Users, Zap, Bell, 
-  Activity, LifeBuoy, CheckCircle, ArrowRight, Target
+  Activity, LifeBuoy, CheckCircle, ArrowRight, Map
 } from 'lucide-react';
 
 const metrics = [
@@ -80,12 +80,51 @@ const metrics = [
     color: "from-emerald-500/20 to-transparent"
   },
   {
-    title: "Recommendation 360° View",
-    description: "AI-driven action plan synthesizing RAGAS, feedback, alerts, escalations, and quality metrics to boost patient satisfaction.",
-    icon: <Target className="text-[var(--accent)]" size={24} />,
-    color: "from-[var(--accent)]/20 to-transparent"
-  }
+    title: "Enhancement Roadmap",
+    description: "Live KPI health dashboard with RAGAS radar, CQS dimension scores, and prioritized action backlog from real admin data.",
+    icon: <Map className="text-[var(--accent)]" size={24} />,
+    color: "from-[var(--accent)]/20 to-transparent",
+    featured: true,
+  },
 ];
+
+const mainMetrics = metrics.filter(m => !m.featured);
+const featuredMetric = metrics.find(m => m.featured);
+
+function MetricCard({ metric, featured = false }) {
+  return (
+    <div
+      className={`group relative rounded-lg bg-white/[0.02] border border-white/5 hover:border-[var(--accent)]/50 transition-all duration-300 backdrop-blur-md overflow-visible
+        ${featured ? 'p-4 sm:p-5' : 'p-2.5 sm:p-3'}`}
+    >
+      {/* Tooltip — single line, white */}
+      <div
+        className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-md bg-black/90 border border-white/20 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50 pointer-events-none max-w-[calc(100vw-2rem)]"
+        role="tooltip"
+      >
+        <p className="text-white text-[10px] sm:text-xs font-medium whitespace-nowrap">
+          {metric.description}
+        </p>
+      </div>
+
+      <div className={`absolute inset-0 rounded-lg bg-gradient-to-br ${metric.color} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+      <div className="relative z-10">
+        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md bg-white/5 flex items-center justify-center mb-1.5 group-hover:scale-105 transition-transform border border-white/5">
+          {React.cloneElement(metric.icon, { size: featured ? 20 : 16, className: 'text-[var(--accent)]' })}
+        </div>
+        <h3 className={`font-black uppercase tracking-wide mb-1 group-hover:text-[var(--accent)] transition-colors text-[var(--text-main)] leading-snug
+          ${featured ? 'text-sm sm:text-base whitespace-normal' : 'text-xs sm:text-sm'}`}>
+          {metric.title}
+        </h3>
+        <p className={`text-[var(--text-dim)] leading-snug font-medium
+          ${featured ? 'text-xs sm:text-sm' : 'text-[10px] sm:text-xs line-clamp-2'}`}>
+          {metric.description}
+        </p>
+      </div>
+      <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-[var(--grad-primary)] group-hover:w-full transition-all duration-500 rounded-b-lg" />
+    </div>
+  );
+}
 
 export default function AdminIntro() {
   const navigate = useNavigate();
@@ -99,7 +138,7 @@ export default function AdminIntro() {
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay" />
       </div>
 
-      <div className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6 pb-28">
+      <div className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6 pb-44 sm:pb-52">
         {/* Hero — compact */}
         <div className="text-center mb-4 sm:mb-5">
           <h2 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tighter uppercase flex flex-wrap justify-center gap-x-3 text-[var(--text-main)]">
@@ -112,29 +151,21 @@ export default function AdminIntro() {
           </p>
         </div>
 
-        {/* Metrics grid — denser cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-2.5 w-full">
-          {metrics.map((metric, index) => (
-            <div
-              key={index}
-              className="group relative p-2.5 sm:p-3 rounded-lg bg-white/[0.02] border border-white/5 hover:border-[var(--accent)]/50 transition-all duration-300 backdrop-blur-md overflow-hidden"
-            >
-              <div className={`absolute inset-0 bg-gradient-to-br ${metric.color} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
-              <div className="relative z-10">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md bg-white/5 flex items-center justify-center mb-1.5 group-hover:scale-105 transition-transform border border-white/5">
-                  {React.cloneElement(metric.icon, { size: 16, className: 'text-[var(--accent)]' })}
-                </div>
-                <h3 className="text-xs sm:text-sm font-black uppercase tracking-wide mb-1 group-hover:text-[var(--accent)] transition-colors text-[var(--text-main)] leading-tight">
-                  {metric.title}
-                </h3>
-                <p className="text-[var(--text-dim)] text-[10px] sm:text-xs leading-snug line-clamp-2 font-medium">
-                  {metric.description}
-                </p>
-              </div>
-              <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-[var(--grad-primary)] group-hover:w-full transition-all duration-500" />
-            </div>
+        {/* Metrics grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-2.5 w-full overflow-visible pt-8">
+          {mainMetrics.map((metric, index) => (
+            <MetricCard key={index} metric={metric} />
           ))}
         </div>
+
+        {/* Featured metric — centered */}
+        {featuredMetric && (
+          <div className="flex justify-center mt-3 sm:mt-4 mb-6 sm:mb-8 w-full scroll-mb-48 overflow-visible pt-8">
+            <div className="w-full max-w-md">
+              <MetricCard metric={featuredMetric} featured />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Sticky CTA — always visible above fold / when scrolling */}

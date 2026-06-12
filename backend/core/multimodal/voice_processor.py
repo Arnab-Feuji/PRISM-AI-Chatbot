@@ -349,7 +349,7 @@ def synthesize_speech(text: str, language: str = "en", voice: str = "nova") -> O
         settings = get_settings()
 
         LANG_VOICES = {
-            "en": "nova", "es": "nova", "pt": "nova",
+            "en": "nova", "es": "nova", "fr": "nova", "pt": "nova",
             "hi": "onyx", "te": "onyx", "pa": "onyx",
         }
         selected_voice = LANG_VOICES.get(language, "nova")

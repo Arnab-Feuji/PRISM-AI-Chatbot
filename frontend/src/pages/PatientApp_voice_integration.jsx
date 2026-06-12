@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import api from "../services/api";
 import { LogOut, User as UserIcon, Send, ChevronRight, Lock, MessageSquare, ExternalLink, Brain, Activity, RefreshCw, Plus, FileText, Download, Trash2 } from "lucide-react";
+import BackButton from "../Components/BackButton";
 import ImageUpload, { ImageAnalysisMessage } from "../Components/ImageUpload";
 import VoiceChat, { VoiceMessage } from "../Components/VoiceChat";
 import LanguageSelector from "../Components/LanguageSelector";
@@ -234,6 +235,8 @@ export default function PatientApp() {
       role:             m.role,
       content:          m.content,
       id:               m.id,
+      created_at:       m.created_at,
+      timestamp_label:  m.timestamp_label,
       isVoice:          m.is_voice,
       response_type:    m.is_image ? "image_analysis" : "answer",
       confidence:       m.confidence,
@@ -403,7 +406,8 @@ export default function PatientApp() {
     if (!msg || !selAgent) return;
     setInput("");
 
-    const userMsg = { role: "user", content: msg, id: Date.now() };
+    const now = new Date().toISOString();
+    const userMsg = { role: "user", content: msg, id: Date.now(), created_at: now };
     setMessages(m => [...m, userMsg]);
     setLoading(true);
 
@@ -486,10 +490,12 @@ export default function PatientApp() {
 
   const handleImageAnalysis = (data) => {
     if (!convId) setConvId(data.conversation_id);
+    const now = new Date().toISOString();
     setMessages(m => [...m, {
       role: "user",
       content: `[Image: ${data.image_label}]`,
-      id: Date.now()
+      id: Date.now(),
+      created_at: now,
     }, {
       role: "assistant",
       content: data.response,
@@ -514,7 +520,11 @@ export default function PatientApp() {
   const handleVoiceMessage = (msgObj) => {
     // msgObj: {role, content, isVoice, voiceData, id, respondedBy, etc}
     if (!convId && msgObj.conversation_id) setConvId(msgObj.conversation_id);
-    setMessages(m => [...m, { ...msgObj, id: msgObj.id || Date.now() }]);
+    setMessages(m => [...m, {
+      ...msgObj,
+      id: msgObj.id || Date.now(),
+      created_at: msgObj.created_at || new Date().toISOString(),
+    }]);
     setIsHistoryHidden(false); // Auto-restore on voice message
   };
 
@@ -538,7 +548,6 @@ export default function PatientApp() {
         selDisease={selDisease}
         selAgent={selAgent}
         onSelectAgent={selectAgent}
-        onToggleHistory={() => setShowChatHistory(true)}
       />
 
 
@@ -557,7 +566,6 @@ export default function PatientApp() {
               onLogout={onLogout}
               onOpenPrescription={() => setPrescriptionModalOpen(true)}
               onOpenHistory={() => { setHistoryModalOpen(true); setHistoryAck(true); }}
-              onToggleHistory={() => setShowChatHistory(true)}
               canRequestPrescription={!!convId}
               lang={lang}
               changeLang={changeLang}
@@ -569,28 +577,14 @@ export default function PatientApp() {
         {/* NavBar when no agent selected */}
         {!selAgent && (
           <div style={{ padding: "0 20px", height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
-            <div style={{ fontWeight: 800, fontSize: 16, color: "var(--text-main)", tracking: "tight" }}>PRISM</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <BackButton
+                fallbackPath="/patient"
+                style={{ background: "transparent", border: "none", padding: 8, cursor: "pointer", color: "#64748B", display: "flex", alignItems: "center" }}
+              />
+              <div style={{ fontWeight: 800, fontSize: 16, color: "var(--text-main)", tracking: "tight" }}>PRISM</div>
+            </div>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button
-                onClick={() => setShowChatHistory(true)}
-                title="View chat history (last 15 days)"
-                style={{
-                  display:      "flex",
-                  alignItems:   "center",
-                  gap:          5,
-                  padding:      "6px 10px",
-                  background:   "transparent",
-                  border:       "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 8,
-                  fontSize:     12,
-                  color:        "#94A3B8",
-                  cursor:       "pointer",
-                  fontFamily:   "inherit",
-                  fontWeight:   500,
-                }}
-              >
-                🕐 History
-              </button>
               <button 
                 onClick={onLogout} 
                 title="Sign out"
@@ -724,32 +718,71 @@ export default function PatientApp() {
             />
           )}
 
-        {/* Restore / Delete Button */}
-        {selAgent && convId && (
-          <div style={{ display: "flex", justifyContent: "center", paddingBottom: 8 }}>
-            <button 
-              onClick={handleToggleVisibility}
-              style={{
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                padding: "6px 14px",
-                borderRadius: 20,
-                cursor: "pointer",
-                color: isHistoryHidden ? "#F37029" : "#94A3B8",
-                fontSize: 11,
-                fontWeight: 700,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                transition: "all 0.2s ease",
-                boxShadow: "0 2px 5px rgba(0,0,0,0.2)"
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
-              onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
-            >
-              {isHistoryHidden ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-              {isHistoryHidden ? "Restore History" : "Delete / Restore"}
-            </button>
+        {/* Chat actions — bottom of chat area */}
+        {selAgent && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            padding: "0 16px 10px",
+            gap: 8,
+            flexShrink: 0,
+          }}>
+            <div />
+            <div style={{ justifySelf: "center" }}>
+              {convId && (
+                <button
+                  onClick={handleToggleVisibility}
+                  style={{
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    padding: "6px 14px",
+                    borderRadius: 20,
+                    cursor: "pointer",
+                    color: isHistoryHidden ? "#F37029" : "#94A3B8",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.2s ease",
+                    boxShadow: "0 2px 5px rgba(0,0,0,0.2)",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                >
+                  {isHistoryHidden ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                  {isHistoryHidden ? "Restore History" : "Delete / Restore"}
+                </button>
+              )}
+            </div>
+            <div style={{ justifySelf: "end" }}>
+              <button
+                onClick={() => setShowChatHistory(true)}
+                title="View chat history (last 15 days)"
+                style={{
+                  background: "var(--grad-primary)",
+                  border: "none",
+                  padding: "8px 18px",
+                  borderRadius: 22,
+                  cursor: "pointer",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  transition: "all 0.2s ease",
+                  boxShadow: "0 2px 8px var(--accent-glow)",
+                  fontFamily: "inherit",
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-1px)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; }}
+              >
+                <RefreshCw size={15} /> Chat History
+              </button>
+            </div>
           </div>
         )}
 
@@ -865,58 +898,47 @@ export default function PatientApp() {
 }
 
 // ─── Disease Sidebar ───────────────────────────────────────────────────────────
-function DiseaseSidebar({ diseases, subs, selDisease, selAgent, onSelectAgent, onToggleHistory }) {
+function DiseaseSidebar({ diseases, subs, selDisease, selAgent, onSelectAgent }) {
   const finalVisible = diseases;
+  const [expandedCode, setExpandedCode] = useState(null);
+
+  useEffect(() => {
+    if (selDisease?.code) setExpandedCode(selDisease.code);
+  }, [selDisease?.code]);
+
+  const handleDiseaseClick = (d) => {
+    if (expandedCode === d.code) {
+      setExpandedCode(null);
+      return;
+    }
+    setExpandedCode(d.code);
+    if (d.agents[0]) onSelectAgent(d, d.agents[0]);
+  };
 
   return (
     <aside style={{ width: 220, background: "var(--bg-main)", borderRight: "1px solid var(--border)", overflowY: "hidden", flexShrink: 0, display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "16px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-        <button
-          onClick={onToggleHistory}
-          style={{
-            width: "100%",
-            padding: "12px",
-            background: "var(--grad-primary)",
-            border: "none",
-            borderRadius: 12,
-            color: "#fff",
-            fontSize: 14,
-            fontWeight: 800,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-            cursor: "pointer",
-            boxShadow: "0 4px 12px var(--accent-glow)",
-            transition: "all 0.2s ease",
-            fontFamily: "inherit"
-          }}
-          onMouseOver={e => e.currentTarget.style.transform = "translateY(-2px)"}
-          onMouseOut={e => e.currentTarget.style.transform = "translateY(0)"}
-        >
-          <RefreshCw size={18} /> Chat History
-        </button>
-      </div>
-
       <div style={{ padding: "10px 8px", flex: 1, overflowY: "auto" }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: "#94A3B8", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8, padding: "0 6px" }}>Disease Domains</div>
         {finalVisible.map(d => {
-          const has    = true; // Since we filtered, they all have it
-          const active = selDisease?.code === d.code;
+          const selected = selDisease?.code === d.code;
+          const expanded = expandedCode === d.code;
           return (
             <div key={d.code} style={{ marginBottom: 4 }}>
               <button
-                onClick={() => { if (d.agents[0]) onSelectAgent(d, d.agents[0]); }}
-                style={{ width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 12, border: "none", background: active ? "var(--accent-glow)" : "transparent", color: active ? "var(--accent)" : "var(--text-dim)", fontWeight: active ? 700 : 500, fontSize: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", transition: "all .2s ease", fontFamily: "inherit" }}
+                onClick={() => handleDiseaseClick(d)}
+                style={{ width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 12, border: "none", background: selected || expanded ? "var(--accent-glow)" : "transparent", color: selected || expanded ? "var(--accent)" : "var(--text-dim)", fontWeight: selected || expanded ? 700 : 500, fontSize: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", transition: "all .2s ease", fontFamily: "inherit" }}
               >
                 <span style={{ fontSize: 16 }}>{d.icon}</span>{d.name}
               </button>
-              {active && (
+              {expanded && (
                 <div style={{ paddingLeft: 12, marginTop: 4, marginBottom: 8, borderLeft: "2px solid var(--accent-glow)", marginLeft: 20 }}>
                   {d.agents.map(a => (
                     <button
                       key={a.id}
-                      onClick={() => onSelectAgent(d, a)}
+                      onClick={() => {
+                        setExpandedCode(d.code);
+                        onSelectAgent(d, a);
+                      }}
                       title={a.fullName}
                       style={{ width: "100%", textAlign: "left", padding: "6px 12px", borderRadius: 8, border: "none", background: selAgent?.id === a.id ? "var(--accent-glow)" : "transparent", color: selAgent?.id === a.id ? "var(--accent)" : "var(--text-dim)", fontSize: 12, fontWeight: selAgent?.id === a.id ? 600 : 400, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 2, transition: "all .2s ease", fontFamily: "inherit" }}
                     >
@@ -934,7 +956,7 @@ function DiseaseSidebar({ diseases, subs, selDisease, selAgent, onSelectAgent, o
 }
 
 // ─── Agent Header Bar ──────────────────────────────────────────────────────────
-function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLogout, onOpenPrescription, onOpenHistory, onToggleHistory, canRequestPrescription, lang, changeLang }) {
+function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLogout, onOpenPrescription, onOpenHistory, canRequestPrescription, lang, changeLang }) {
   const routeBadge = {
     primary:    { label: "Primary",    color: "#34D399", bg: "rgba(52, 211, 153, 0.1)" },
     specialist: { label: "Specialist", color: "#F5C842", bg: "rgba(245, 200, 66, 0.1)" },
@@ -943,6 +965,10 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
 
   return (
     <div style={{ padding: "12px 20px", background: "var(--bg-card)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+      <BackButton
+        fallbackPath="/app"
+        style={{ background: "transparent", border: "none", padding: 8, cursor: "pointer", color: "#64748B", display: "flex", alignItems: "center", flexShrink: 0 }}
+      />
       <div style={{ width: 40, height: 40, rounded: "12px", background: "var(--accent-glow)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{agent.icon}</div>
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 800, fontSize: 18, color: "var(--text-main)", letterSpacing: "-0.01em" }}>{disease?.name}</div>
@@ -951,19 +977,16 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
 
       {canRequestPrescription && (
         <>
-          <button 
-            onClick={onToggleHistory}
-            title="View chat history (last 15 days)"
-            style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", padding: "8px 12px", borderRadius: 10, cursor: "pointer", color: "#94A3B8", fontSize: 12, fontWeight: 600, transition: "all 0.2s" }}
-          >
-            <RefreshCw size={14} /> History
-          </button>
-
-          <button 
+          <button
             onClick={onOpenHistory}
-            style={{ background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.2)", padding: "6px 12px", borderRadius: 8, cursor: "pointer", color: "var(--accent)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginRight: 8 }}
+            title="Download chat history"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.2)",
+              width: 36, height: 36, borderRadius: 10, cursor: "pointer", color: "var(--accent)",
+            }}
           >
-            <Download size={14} /> Download History
+            <Download size={18} />
           </button>
 
           <button 
@@ -1093,14 +1116,14 @@ function SuggestedQuestions({ questions, onSelect }) {
 }
 
 // ─── Empty State ───────────────────────────────────────────────────────────────
-function EmptyState({ onOpenHistory }) {
+function EmptyState() {
   return (
     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20, color: "#94A3B8", padding: 40 }}>
       <div style={{ fontSize: 64, animation: "bounce 2s infinite" }}>👋</div>
       <div style={{ textAlign: "center", maxWidth: 400 }}>
         <h2 style={{ color: "#F1F5F9", marginBottom: 12 }}>Welcome back to PRISM</h2>
         <p style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 24 }}>
-          You can check your previous conversations in the <strong>Chat History</strong> or select a disease domain from the sidebar to start a new consultation.
+          Select a disease domain from the sidebar to start a consultation with a specialist agent.
         </p>
       </div>
     </div>
@@ -1137,6 +1160,7 @@ function InputBar({ input, setInput, loading, onSend, agentName, agentId, convId
           onAnalysisComplete={onImageAnalysis}
           diseaseColor={diseaseColor}
           diseaseName={diseaseName}
+          compact
         />
         <div
           className="prism-input-field-wrap"
@@ -1198,21 +1222,24 @@ function InputBar({ input, setInput, loading, onSend, agentName, agentId, convId
         <button
           disabled={loading || !input.trim()}
           onClick={() => onSend()}
+          title={t ? t.send : "Send"}
           style={{
             flexShrink: 0,
-            padding: "12px 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 44,
+            height: 44,
             background: loading || !input.trim() ? "var(--border)" : "var(--accent)",
             color: "#fff",
             border: "none",
             borderRadius: 12,
-            fontSize: 13,
-            fontWeight: 700,
             cursor: loading || !input.trim() ? "not-allowed" : "pointer",
             fontFamily: "inherit",
             transition: "all .2s ease",
           }}
         >
-          {t ? t.send : "Send"}
+          <Send size={18} strokeWidth={2.25} />
         </button>
       </div>
       <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 8, textAlign: "center" }}>

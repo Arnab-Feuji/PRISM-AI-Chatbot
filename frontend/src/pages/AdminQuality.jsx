@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import api from "../services/api";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
-  Cell, LineChart, Line, AreaChart, Area
+  Cell, LineChart, Line, AreaChart, Area, LabelList
 } from 'recharts';
 import { 
-  Activity, Brain, Shield, Zap, Layout, Clock, Search, 
-  Filter, ChevronDown, ChevronRight, Info, ArrowUpRight, TrendingUp,
-  Target, AlertCircle, CheckCircle2, Download, BookOpen, X
+  Brain, Filter, ChevronDown, ChevronRight, BookOpen, X, Download
 } from 'lucide-react';
 
 async function apiFetch(path) {
@@ -22,6 +20,46 @@ const LEGACY_DISEASE_LABELS = {
   "Cancer Care (CA)": "Cancer Care",
   "Mental Illness (MH)": "Mental Health",
   "Respiratory (RS)": "Respiratory",
+};
+
+const DISEASE_DISPLAY_TO_CODE = {
+  "Mental Health": "MH",
+  "Cancer Care": "CA",
+  "Diabetes": "DM",
+  "Cardiovascular": "CV",
+  "Respiratory": "RS",
+};
+
+const DISEASE_CODE_TO_DISPLAY = Object.fromEntries(
+  Object.entries(DISEASE_DISPLAY_TO_CODE).map(([k, v]) => [v, k])
+);
+
+const AGENT_REGISTRY = {
+  "Cancer Care": [
+    { id: "CA1", short: "Screening" }, { id: "CA2", short: "Treatment" },
+    { id: "CA3", short: "Supportive" }, { id: "CA4", short: "Survivorship" },
+    { id: "CA5", short: "Genetics" }, { id: "CA6", short: "General" },
+  ],
+  "Diabetes": [
+    { id: "DM1", short: "Monitoring" }, { id: "DM2", short: "Medication" },
+    { id: "DM3", short: "Nutrition" }, { id: "DM4", short: "Complications" },
+    { id: "DM5", short: "Gestational" }, { id: "DM6", short: "General" },
+  ],
+  "Cardiovascular": [
+    { id: "CV1", short: "Clinical" }, { id: "CV2", short: "Emergency" },
+    { id: "CV3", short: "Medications" }, { id: "CV4", short: "Rehab" },
+    { id: "CV5", short: "Nutrition" }, { id: "CV6", short: "General" },
+  ],
+  "Mental Health": [
+    { id: "MH1", short: "Depression" }, { id: "MH2", short: "Anxiety" },
+    { id: "MH3", short: "Sleep" }, { id: "MH4", short: "Trauma" },
+    { id: "MH5", short: "Crisis" }, { id: "MH6", short: "General" },
+  ],
+  "Respiratory": [
+    { id: "RS1", short: "Asthma" }, { id: "RS2", short: "COPD" },
+    { id: "RS3", short: "Rehab" }, { id: "RS4", short: "Medications" },
+    { id: "RS5", short: "Sleep Apnea" }, { id: "RS6", short: "General" },
+  ],
 };
 
 const LEGACY_AGENT_LABELS = {
@@ -72,14 +110,6 @@ function normalizeQualityMatrix(matrix = []) {
 }
 
 const DIM_KEYS = ['E', 'R', 'C', 'S', 'F', 'V'];
-const DIM_LABELS = {
-  E: 'Engagement (30%)',
-  R: 'Response Quality (25%)',
-  C: 'Clinical Safety (20%)',
-  S: 'Session Flow (15%)',
-  F: 'Format Variety (7%)',
-  V: 'Velocity (3%)',
-};
 
 function avg(nums) {
   if (!nums.length) return 0;
@@ -92,6 +122,41 @@ function computeOverallCqs(dimensions = {}) {
       return sum + (Number(dimensions[key]) || 0) * dim.weight;
     }, 0) * 10
   ) / 10;
+}
+
+function getCqsTier(score) {
+  if (score >= 85) return { label: 'GREEN', color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' };
+  if (score >= 70) return { label: 'AMBER', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.12)' };
+  return { label: 'RED', color: '#EF4444', bg: 'rgba(239, 68, 68, 0.12)' };
+}
+
+function formatRefreshTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function buildCqsByDisease(matrix = []) {
+  return aggregateMatrixByField(matrix, 'disease').map(row => ({
+    code: DISEASE_DISPLAY_TO_CODE[row.name] || row.name,
+    name: row.name,
+    cqs: row.cqs,
+    count: row.count,
+  }));
+}
+
+function buildCqsByAgent(matrix = [], diseaseName) {
+  const filtered = matrix.filter(row => row.disease === diseaseName);
+  return aggregateMatrixByField(filtered, 'agent').map(row => {
+    const meta = (AGENT_REGISTRY[diseaseName] || []).find(a => a.short === row.name);
+    return {
+      label: meta ? `${meta.id} — ${meta.short}` : row.name,
+      agentId: meta?.id,
+      cqs: row.cqs,
+      count: row.count,
+    };
+  });
 }
 
 function aggregateMatrixByField(matrix = [], field) {
@@ -119,21 +184,6 @@ function aggregateMatrixByField(matrix = [], field) {
       count: g.count,
     }))
     .sort((a, b) => b.cqs - a.cqs);
-}
-
-function platformAverageRow(dimensions = {}) {
-  const E = dimensions.engagement ?? 0;
-  const R = dimensions.response_quality ?? 0;
-  const C = dimensions.clinical_safety ?? 0;
-  const S = dimensions.session_flow ?? 0;
-  const F = dimensions.format_variety ?? 0;
-  const V = dimensions.velocity ?? 0;
-  return {
-    name: 'Platform Average',
-    E, R, C, S, F, V,
-    cqs: computeOverallCqs(dimensions),
-    count: null,
-  };
 }
 
 const Badge = ({ children, color = 'var(--accent)' }) => (
@@ -236,76 +286,7 @@ const CQS_STRUCTURE = {
 
 const CQS_PARAM_COUNT = Object.values(CQS_STRUCTURE).reduce((n, d) => n + d.params.length, 0);
 
-function AverageMetricsTable({ rows, nameHeader }) {
-  if (!rows?.length) {
-    return (
-      <p className="text-sm text-[var(--text-dim)] py-6 text-center">
-        No conversation metrics available for this view yet.
-      </p>
-    );
-  }
-  return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
-      <table className="w-full text-xs text-left">
-        <thead className="bg-[#0F172A]">
-          <tr>
-            <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">{nameHeader}</th>
-            {DIM_KEYS.map(k => (
-              <th key={k} className="px-3 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">
-                {k}
-              </th>
-            ))}
-            <th className="px-4 py-3 font-mono text-[10px] text-[var(--accent)] uppercase tracking-wider text-center border-l border-white/5">CQS</th>
-            <th className="px-3 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider text-center">Records</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-white/5">
-          {rows.map((row, idx) => (
-            <tr key={`${row.name}-${idx}`} className="hover:bg-white/5 transition-colors">
-              <td className="px-4 py-3 font-bold text-white/90">{row.name}</td>
-              {DIM_KEYS.map(k => (
-                <td key={k} className="px-3 py-3 text-center text-white/80 font-mono">{row[k]}</td>
-              ))}
-              <td className="px-4 py-3 text-center font-black text-[14px] border-l border-white/5 text-[var(--accent)]">{row.cqs}</td>
-              <td className="px-3 py-3 text-center text-ink3 font-mono">{row.count ?? '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-const Tooltip = ({ title, content, tag, source, formula, children }) => {
-  const [active, setActive] = useState(false);
-  if (!content) return children;
-  return (
-    <div 
-      className="relative block w-full"
-      onMouseEnter={() => setActive(true)} 
-      onMouseLeave={() => setActive(false)}
-    >
-      {children}
-      {active && (
-        <div className="absolute z-[100] bottom-full left-1/2 -translate-x-1/2 mb-4 w-72 p-5 bg-[#0F172A] border border-white/20 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] pointer-events-none text-left animate-in fade-in zoom-in duration-200">
-          <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-[#0F172A]" />
-          <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/10">
-            <span className="text-[11px] font-black text-white uppercase tracking-widest">{title}</span>
-            {tag && <span className="px-2 py-0.5 rounded-md bg-white/5 text-[9px] font-black uppercase tracking-widest text-[var(--accent)] border border-white/10">{tag}</span>}
-          </div>
-          {source && <div className="text-[10px] font-mono text-white/40 mb-1 select-all">{source}</div>}
-          {formula && <div className="text-[10px] text-white/50 mb-3 font-medium italic leading-relaxed">{formula}</div>}
-          <div className="text-[12px] text-white/90 leading-relaxed font-medium">
-            {content}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 export default function AdminQuality() {
-  const [activeDim, setActiveDim] = useState('engagement');
   const [disease, setDisease] = useState('all');
   const [agent, setAgent] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -313,7 +294,7 @@ export default function AdminQuality() {
   const [daysFilter, setDaysFilter] = useState(7);
   const [showDefinitions, setShowDefinitions] = useState(false);
   const [expandedDefDimensions, setExpandedDefDimensions] = useState(new Set(['engagement']));
-  const [defAverageTab, setDefAverageTab] = useState('platform');
+  const [selectedChartDisease, setSelectedChartDisease] = useState(null);
 
   useEffect(() => {
     // Only show full loading spinner on first load
@@ -339,7 +320,7 @@ export default function AdminQuality() {
         setData(mockData);
         setLoading(false);
       });
-  }, [daysFilter]); // Only re-fetch on timeframe change for now, or add disease/agent if needed
+  }, [daysFilter]);
 
   const AGENTS_BY_DISEASE = {
     all: ["All Agents"],
@@ -359,17 +340,14 @@ export default function AdminQuality() {
       row.date, row.disease, row.agent, row.E, row.R, row.C, row.S, row.F, row.V, row.cqs,
       row.cqs >= 85 ? "GREEN" : row.cqs >= 70 ? "AMBER" : "RED"
     ]);
-    let csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", encodeURI(csvContent));
     link.setAttribute("download", `CQS_Report_${daysFilter}_days.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
-
-  const activeData = CQS_STRUCTURE[activeDim];
 
   const toggleDefDimension = (key) => {
     setExpandedDefDimensions(prev => {
@@ -380,40 +358,70 @@ export default function AdminQuality() {
     });
   };
 
-  const platformAvgRows = data?.dimensions ? [platformAverageRow(data.dimensions)] : [];
-  const diseaseAvgRows = aggregateMatrixByField(data?.matrix, 'disease');
-  const agentAvgRows = aggregateMatrixByField(data?.matrix, 'agent');
+  const diseaseChartData = useMemo(
+    () => buildCqsByDisease(data?.matrix || []),
+    [data?.matrix]
+  );
 
-  const defAverageViews = {
-    platform: { label: 'Average Conversation Metrics', header: 'Scope', rows: platformAvgRows },
-    disease: { label: 'Average by Disease', header: 'Disease', rows: diseaseAvgRows },
-    agent: { label: 'Average by Agent', header: 'Agent', rows: agentAvgRows },
-  };
-  const activeDefAverage = defAverageViews[defAverageTab];
+  const agentChartData = useMemo(
+    () => (selectedChartDisease ? buildCqsByAgent(data?.matrix || [], selectedChartDisease) : []),
+    [data?.matrix, selectedChartDisease]
+  );
+
+  useEffect(() => {
+    if (!diseaseChartData.length) return;
+    if (!selectedChartDisease || !diseaseChartData.some(d => d.name === selectedChartDisease)) {
+      setSelectedChartDisease(diseaseChartData[0].name);
+    }
+  }, [diseaseChartData, selectedChartDisease]);
+
+  const selectedDiseaseMeta = diseaseChartData.find(d => d.name === selectedChartDisease);
+  const selectedDiseaseCode = selectedDiseaseMeta?.code || '—';
+
+  const overallCqs = data?.overall_cqs ?? computeOverallCqs(data?.dimensions);
+  const cqsTier = getCqsTier(overallCqs);
+  const uniqueConversations = data?.unique_conversations ?? data?.active_patients ?? 0;
+  const refreshLabel = formatRefreshTime(data?.refreshed_at);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
-      {/* Header & Filter */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 border-b border-white/5 pb-6">
-        <div>
-          <h2 className="text-xl font-black text-[var(--text-main)] tracking-tight">Conversation Quality Score (CQS)</h2>
-          <p className="text-xs text-[var(--text-dim)] font-medium mt-1">
-            {CQS_PARAM_COUNT} parameters · 6 dimensions · averaged per patient across all sessions. Click a dimension to explore.
-          </p>
+      {/* Header, definition & live metadata */}
+      <div className="flex flex-col gap-4 border-b border-white/5 pb-6">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+          <div className="flex-1 space-y-3 min-w-0">
+            <h2 className="text-xl font-black text-[var(--text-main)] tracking-tight">Conversation Quality Score (CQS)</h2>
+            <p className="text-sm text-[var(--text-dim)] max-w-4xl leading-relaxed">
+              The Conversation Quality Score (CQS) is a 0–100 index measuring how effectively patient sessions perform
+              across engagement, response quality, clinical safety, session flow, format variety, and velocity.
+            </p>
+            <p className="text-sm text-[var(--text-dim)] max-w-4xl leading-relaxed">
+              This score is computed in real-time from the PRISM PostgreSQL database and updates automatically as new conversations occur.
+            </p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-dim)]">
+              <span className="font-medium">{CQS_PARAM_COUNT} parameters · 6 weighted dimensions</span>
+              <span className="text-[#F472B6] font-bold">
+                {loading ? '…' : uniqueConversations} unique conversations analyzed (live)
+              </span>
+              <span className="font-mono">refreshed {loading ? '…' : refreshLabel}</span>
+            </div>
+            <p className="text-[10px] text-[var(--text-dim)] italic max-w-3xl">
+              Overall score uses all conversations in the database; the matrix table below respects the selected timeframe filter.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDefinitions(v => !v)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition-all shrink-0
+              ${showDefinitions
+                ? 'bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/40 shadow-[0_0_20px_rgba(45,212,191,0.12)]'
+                : 'bg-white/5 text-[var(--text-dim)] border-white/10 hover:text-white hover:border-white/20'}`}
+          >
+            <BookOpen size={14} />
+            Metrics Definition
+            {showDefinitions && <X size={12} className="opacity-60" />}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowDefinitions(v => !v)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition-all shrink-0
-            ${showDefinitions
-              ? 'bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/40 shadow-[0_0_20px_rgba(45,212,191,0.12)]'
-              : 'bg-white/5 text-[var(--text-dim)] border-white/10 hover:text-white hover:border-white/20'}`}
-        >
-          <BookOpen size={14} />
-          Metrics Definition
-          {showDefinitions && <X size={12} className="opacity-60" />}
-        </button>
       </div>
 
       {showDefinitions && (
@@ -426,7 +434,7 @@ export default function AdminQuality() {
                   CQS evaluates every patient conversation across{' '}
                   <strong className="text-[var(--text-main)]">6 dimensions</strong> and{' '}
                   <strong className="text-[var(--text-main)]">{CQS_PARAM_COUNT} parameters</strong>.
-                  Scores are averaged per patient, then rolled up to platform, disease, and agent views below.
+                  Scores are averaged per patient and rolled up into the overall CQS index.
                 </p>
               </div>
               <Badge color="var(--accent)">{CQS_PARAM_COUNT} Metrics</Badge>
@@ -447,7 +455,7 @@ export default function AdminQuality() {
               </div>
             </div>
 
-            <div className="space-y-3 mb-8">
+            <div className="space-y-3">
               {Object.entries(CQS_STRUCTURE).map(([key, dim]) => {
                 const isExpanded = expandedDefDimensions.has(key);
                 return (
@@ -496,313 +504,340 @@ export default function AdminQuality() {
                 );
               })}
             </div>
-
-            <div className="border-t border-white/10 pt-6">
-              <h4 className="text-sm font-bold text-[var(--text-main)] mb-1">Live Average Conversation Metrics</h4>
-              <p className="text-[11px] text-[var(--text-dim)] mb-4">
-                Rolled-up CQS dimension scores for the selected {daysFilter}-day window. Switch tabs to compare platform, disease, and agent averages.
-              </p>
-
-              <div className="flex flex-wrap gap-2 mb-4">
-                {Object.entries(defAverageViews).map(([id, view]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setDefAverageTab(id)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all
-                      ${defAverageTab === id
-                        ? 'bg-[var(--accent)] text-white border-[var(--accent)] shadow-lg'
-                        : 'bg-white/5 text-[var(--text-dim)] border-white/10 hover:text-white'}`}
-                  >
-                    {view.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mb-3 flex flex-wrap gap-3 text-[10px] text-[var(--text-dim)]">
-                {DIM_KEYS.map(k => (
-                  <span key={k}><strong className="text-white/70">{k}</strong> = {DIM_LABELS[k]}</span>
-                ))}
-              </div>
-
-              <AverageMetricsTable rows={activeDefAverage.rows} nameHeader={activeDefAverage.header} />
-            </div>
           </div>
         </div>
       )}
 
-      {/* Dimension Pills */}
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(CQS_STRUCTURE).map(([key, dim]) => {
-          const isActive = activeDim === key;
-          const score = data?.dimensions[key] || 0;
-          return (
-            <button
-              key={key}
-              onClick={() => setActiveDim(key)}
-              style={{ 
-                background: isActive ? dim.bg : 'var(--bg-card)',
-                color: isActive ? dim.color : 'var(--text-dim)',
-                borderColor: isActive ? dim.color : 'transparent'
-              }}
-              className={`px-4 py-2 rounded-full border text-[11px] font-black uppercase tracking-wider transition-all flex items-center gap-2 hover:scale-105 active:scale-95
-                ${!isActive && 'hover:bg-white/5 border-white/5'}`}
+      {/* Overall CQS Score Card */}
+      <div
+        className="rounded-2xl border border-white/10 p-6 md:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6"
+        style={{ background: `linear-gradient(135deg, ${cqsTier.color}18, transparent)` }}
+      >
+        <div className="space-y-2 max-w-xl">
+          <div className="text-[10px] font-black text-[var(--text-dim)] uppercase tracking-[0.25em]">
+            Overall Conversation Quality Score
+          </div>
+          <p className="text-sm text-[var(--text-dim)] leading-relaxed">
+            Weighted average across all six dimensions, recalculated live from stored conversation telemetry.
+          </p>
+          <p className="text-[11px] text-[var(--text-dim)] font-medium">
+            {loading ? '…' : uniqueConversations} unique conversations in this average
+          </p>
+        </div>
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="text-right">
+            <div className="text-5xl md:text-6xl font-black tracking-tighter leading-none" style={{ color: cqsTier.color }}>
+              {loading ? '—' : overallCqs}
+            </div>
+            <div className="text-[10px] font-black text-[var(--text-dim)] uppercase tracking-widest mt-1">CQS / 100</div>
+          </div>
+          {!loading && (
+            <span
+              className="px-3 py-1.5 rounded-lg text-[10px] font-black tracking-widest border"
+              style={{ color: cqsTier.color, background: cqsTier.bg, borderColor: `${cqsTier.color}40` }}
             >
-              <div className="w-1.5 h-1.5 rounded-full" style={{ background: dim.color }} />
-              {dim.label}
-              <span className="opacity-60 text-[9px] font-bold">{Math.round(dim.weight * 100)}%</span>
-            </button>
-          );
-        })}
+              {cqsTier.label}
+            </span>
+          )}
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-40 gap-4 min-h-[600px]">
-          <div className="w-12 h-12 border-4 border-[var(--accent)]/10 border-t-[var(--accent)] rounded-full animate-spin" />
-          <span className="text-sm font-black text-[var(--text-dim)] uppercase tracking-[0.2em] animate-pulse">Syncing Quality Engine...</span>
+      {/* CQS by Disease & Agent charts */}
+      <div className="grid grid-cols-1 gap-6">
+        <div className="card p-6 border border-white/10 bg-[var(--bg-card)] rounded-2xl">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-6">
+            <div>
+              <h3 className="text-sm font-black text-[var(--text-main)]">CQS by Disease</h3>
+              <p className="text-[11px] text-[var(--text-dim)] mt-1">
+                Average CQS per disease (all conversations) — click a bar for agents
+              </p>
+            </div>
+            {selectedDiseaseMeta && !loading && (
+              <span
+                className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold border shrink-0"
+                style={{ color: '#EF4444', borderColor: '#EF444460', background: 'rgba(239, 68, 68, 0.1)' }}
+              >
+                Selected: {selectedDiseaseCode} · {selectedDiseaseMeta.cqs} CQS
+              </span>
+            )}
+          </div>
+          {loading ? (
+            <div className="h-[280px] flex items-center justify-center text-xs text-[var(--text-dim)]">Loading chart…</div>
+          ) : diseaseChartData.length === 0 ? (
+            <div className="h-[280px] flex items-center justify-center text-xs text-[var(--text-dim)]">No disease data available yet.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart
+                data={diseaseChartData}
+                margin={{ top: 24, right: 12, left: 0, bottom: 8 }}
+                onClick={(state) => {
+                  const payload = state?.activePayload?.[0]?.payload;
+                  if (payload?.name) setSelectedChartDisease(payload.name);
+                }}
+              >
+                <CartesianGrid strokeDasharray="4 4" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="code"
+                  tick={{ fill: 'var(--text-dim)', fontSize: 11, fontWeight: 700 }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                  contentStyle={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 12, fontSize: 11 }}
+                  formatter={(value) => [`${value} CQS`, 'Average']}
+                  labelFormatter={(code) => DISEASE_CODE_TO_DISPLAY[code] || code}
+                />
+                <Bar
+                  dataKey="cqs"
+                  radius={[6, 6, 0, 0]}
+                  className="cursor-pointer"
+                  onClick={(entry) => entry?.name && setSelectedChartDisease(entry.name)}
+                >
+                  {diseaseChartData.map((entry) => {
+                    const isSelected = entry.name === selectedChartDisease;
+                    return (
+                      <Cell
+                        key={entry.code}
+                        fill={isSelected ? '#EF4444' : '#7F1D1D'}
+                        stroke={isSelected ? '#FFFFFF' : 'transparent'}
+                        strokeWidth={isSelected ? 1.5 : 0}
+                      />
+                    );
+                  })}
+                  <LabelList
+                    dataKey="cqs"
+                    position="top"
+                    content={({ x, y, width, value, index }) => {
+                      const entry = diseaseChartData[index];
+                      const isSelected = entry?.name === selectedChartDisease;
+                      return (
+                        <text
+                          x={x + width / 2}
+                          y={y - 6}
+                          textAnchor="middle"
+                          fill={isSelected ? '#FFFFFF' : 'rgba(255,255,255,0.4)'}
+                          fontSize={11}
+                          fontWeight={isSelected ? 800 : 600}
+                        >
+                          {value}
+                        </text>
+                      );
+                    }}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
-      ) : (
-        <>
-          {/* Detail Card */}
-          <div 
-            className="card-premium p-1 transition-all duration-500 shadow-2xl relative"
-            style={{ background: `linear-gradient(135deg, ${activeData.color}22, transparent)` }}
-          >
-            <div className="bg-[var(--bg-card)] rounded-[20px] p-8 border border-white/5">
-              <div className="flex items-start justify-between mb-8">
-                <div className="flex gap-5">
-                  <div 
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-black shadow-inner border"
-                    style={{ background: activeData.bg, color: activeData.color, borderColor: `${activeData.color}33` }}
-                  >
-                    {activeData.initial}
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-[var(--text-main)] flex items-center gap-2">
-                      {activeData.label}
-                      <span className="text-[10px] font-black text-[var(--text-dim)] uppercase tracking-[0.2em] bg-white/5 px-2 py-1 rounded-md">
-                        {(activeData.weight * 100)}% of CQS · {activeData.params.length} parameters
-                      </span>
-                    </h3>
-                    <p className="text-sm text-[var(--text-dim)] font-medium mt-1">{activeData.desc}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-4xl font-black tracking-tighter" style={{ color: activeData.color }}>
-                    {data?.dimensions[activeDim] || 0}
-                  </div>
-                  <div className="text-[10px] font-black text-[var(--text-dim)] uppercase tracking-widest">Dimension Achievement</div>
-                </div>
+
+        <div className="card p-6 border border-white/10 bg-[var(--bg-card)] rounded-2xl">
+          <div className="mb-6">
+            <h3 className="text-sm font-black text-[var(--text-main)]">CQS by Agent</h3>
+            <p className="text-[11px] text-[var(--text-dim)] mt-1">
+              {selectedChartDisease
+                ? `${DISEASE_CODE_TO_DISPLAY[selectedDiseaseCode] || selectedChartDisease} (${selectedDiseaseCode}) — average CQS per specialist (${agentChartData.length} agents with data)`
+                : 'Select a disease above to view agent breakdown'}
+            </p>
+          </div>
+          {loading ? (
+            <div className="h-[320px] flex items-center justify-center text-xs text-[var(--text-dim)]">Loading chart…</div>
+          ) : agentChartData.length === 0 ? (
+            <div className="h-[320px] flex items-center justify-center text-xs text-[var(--text-dim)]">No agent data for this disease yet.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(280, agentChartData.length * 44)}>
+              <BarChart
+                layout="vertical"
+                data={agentChartData}
+                margin={{ top: 4, right: 48, left: 8, bottom: 4 }}
+              >
+                <CartesianGrid strokeDasharray="4 4" stroke="rgba(255,255,255,0.06)" horizontal={false} />
+                <XAxis
+                  type="number"
+                  domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  width={148}
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10, fontWeight: 600 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                  contentStyle={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 12, fontSize: 11 }}
+                  formatter={(value) => [`${value} CQS`, 'Average']}
+                />
+                <Bar dataKey="cqs" fill="#EF4444" radius={[0, 6, 6, 0]}>
+                  <LabelList
+                    dataKey="cqs"
+                    position="right"
+                    formatter={(v) => v}
+                    style={{ fill: '#fff', fontSize: 11, fontWeight: 800 }}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {!showDefinitions && (
+        loading ? (
+          <div className="flex flex-col items-center justify-center py-40 gap-4 min-h-[400px]">
+            <div className="w-12 h-12 border-4 border-[var(--accent)]/10 border-t-[var(--accent)] rounded-full animate-spin" />
+            <span className="text-sm font-black text-[var(--text-dim)] uppercase tracking-[0.2em] animate-pulse">Syncing Quality Engine...</span>
+          </div>
+        ) : (
+          <>
+            <div className="mt-6 mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-black text-[var(--text-main)] flex items-center gap-2 mb-1">Real-time CQS Performance Matrix</h3>
+                <p className="text-sm text-[var(--text-dim)] font-medium">Live 6-dimension conversation quality breakdown across all supported disease scopes and agent tiers.</p>
               </div>
 
-              <div className="space-y-6">
-                {activeData.params.map(p => {
-                  const weightVal = p.weight || 0;
-                  return (
-                    <Tooltip 
-                      key={p.key} 
-                      title={p.label} 
-                      content={p.tip}
-                      tag={p.tag}
-                      source={p.source}
-                      formula={p.formula}
-                    >
-                      <div className="group cursor-help">
-                        <div className="flex justify-between items-end mb-2">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-black text-[var(--text-main)] group-hover:text-[var(--accent)] transition-colors">{p.label}</span>
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest
-                                ${p.tag === 'RAGAS' ? 'bg-indigo-500/10 text-indigo-400' : 
-                                  p.tag === 'Safety' ? 'bg-red-500/10 text-red-400' :
-                                  p.tag === 'Perf' ? 'bg-emerald-500/10 text-emerald-400' :
-                                  'bg-white/10 text-[var(--text-dim)]'}`}
-                              >
-                                {p.tag}
-                              </span>
-                            </div>
-                            <div className="font-mono text-[9px] text-[var(--text-dim)]/50 leading-tight">
-                              {p.source}
-                            </div>
-                            <div className="text-[10px] text-[var(--text-dim)] font-medium">
-                              {p.formula}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm font-black mb-1" style={{ color: activeData.color }}>{weightVal}%</div>
-                          </div>
-                        </div>
-                        <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                          <div 
-                            className="h-full rounded-full transition-all duration-1000 shadow-sm"
-                            style={{ width: `${weightVal}%`, background: `linear-gradient(to right, ${activeData.color}, ${activeData.color}88)` }}
-                          />
-                        </div>
-                      </div>
-                    </Tooltip>
-                  );
-                })}
+              <div className="flex items-center gap-2 flex-nowrap overflow-x-auto no-scrollbar bg-[var(--bg-card)] border border-white/5 p-1.5 rounded-2xl shadow-2xl">
+                <div className="relative group min-w-[160px]">
+                  <Filter size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)]" />
+                  <select
+                    value={disease}
+                    onChange={e => {
+                      setDisease(e.target.value);
+                      setAgent('all');
+                    }}
+                    className="w-full pl-8 pr-7 py-1.5 bg-white/5 border border-white/5 rounded-xl text-[10px] font-bold appearance-none hover:border-[var(--accent)]/50 transition-all cursor-pointer"
+                  >
+                    <option value="all" className="bg-[#1a1a2e]">All Diseases</option>
+                    <option value="Cancer Care" className="bg-[#1a1a2e]">Cancer Care</option>
+                    <option value="Diabetes" className="bg-[#1a1a2e]">Diabetes</option>
+                    <option value="Cardiovascular" className="bg-[#1a1a2e]">Cardiovascular</option>
+                    <option value="Mental Health" className="bg-[#1a1a2e]">Mental Health</option>
+                    <option value="Respiratory" className="bg-[#1a1a2e]">Respiratory</option>
+                  </select>
+                  <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)] pointer-events-none" />
+                </div>
+
+                <div className={`relative group min-w-[180px] ${disease === 'all' ? 'opacity-50' : ''}`}>
+                  <Brain size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)]" />
+                  <select
+                    value={agent}
+                    disabled={disease === 'all'}
+                    onChange={e => setAgent(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 bg-white/5 border border-white/5 rounded-xl text-[10px] font-bold appearance-none hover:border-[var(--accent)]/50 transition-all cursor-pointer"
+                  >
+                    <option value="all" className="bg-[#1a1a2e]">All Agents</option>
+                    {currentAgents.map((a, i) => a !== "All Agents" && (
+                      <option key={i} value={a} className="bg-[#1a1a2e]">{a}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)] pointer-events-none" />
+                </div>
+
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/5 min-w-[140px]">
+                  <span className="text-[10px] font-black text-white/40 uppercase tracking-widest whitespace-nowrap">Timeframe:</span>
+                  <select
+                    className="bg-transparent text-white text-[10px] font-bold outline-none cursor-pointer focus:ring-0 border-none p-0"
+                    value={daysFilter}
+                    onChange={(e) => setDaysFilter(parseInt(e.target.value))}
+                  >
+                    <option value="7" className="bg-[#1a1a2e]">Last 7 Days</option>
+                    <option value="14" className="bg-[#1a1a2e]">Last 14 Days</option>
+                    <option value="21" className="bg-[#1a1a2e]">Last 21 Days</option>
+                    <option value="30" className="bg-[#1a1a2e]">Last 1 Month</option>
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={downloadExcel}
+                  className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-[var(--accent)] hover:brightness-110 text-white text-[10px] font-black transition-all shadow-lg whitespace-nowrap"
+                >
+                  <Download size={12} />
+                  DOWNLOAD EXCEL
+                </button>
               </div>
             </div>
-          </div>
 
-
-      {/* CQS Formula Footer */}
-      <div className="p-6 rounded-2xl bg-white/5 border border-white/10 text-center space-y-4">
-        <h4 className="text-[10px] font-black text-[var(--text-dim)] uppercase tracking-[0.3em]">CQS Composition Formula</h4>
-        <div className="font-mono text-xs p-4 bg-black/20 rounded-xl inline-block border border-white/5 shadow-inner">
-          <span className="text-[var(--text-dim)]">CQS = </span>
-          {Object.entries(CQS_STRUCTURE).map(([k, v], i) => (
-            <React.Fragment key={k}>
-              <span style={{ color: v.color }} className="font-black">{v.initial}</span>
-              <span className="text-white/30">×{v.weight.toFixed(2)}</span>
-              {i < 5 && <span className="text-white/30 mx-2">+</span>}
-            </React.Fragment>
-          ))}
-        </div>
-        <p className="text-[10px] text-[var(--text-dim)] max-w-lg mx-auto leading-relaxed">
-          The Conversation Quality Score is a weighted composite of clinical accuracy, safety adherence, user engagement, and system performance.
-        </p>
-      </div>
-
-      <div className="mt-12 mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h3 className="text-xl font-black text-[var(--text-main)] flex items-center gap-2 mb-1">Real-time CQS Performance Matrix</h3>
-          <p className="text-sm text-[var(--text-dim)] font-medium">Live 6-dimension conversation quality breakdown across all supported disease scopes and agent tiers.</p>
-        </div>
-        
-        <div className="flex items-center gap-2 flex-nowrap overflow-x-auto no-scrollbar bg-[var(--bg-card)] border border-white/5 p-1.5 rounded-2xl shadow-2xl">
-          {/* Disease Filter */}
-          <div className="relative group min-w-[160px]">
-            <Filter size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)]" />
-            <select 
-              value={disease} 
-              onChange={e => {
-                setDisease(e.target.value);
-                setAgent('all');
-              }}
-              className="w-full pl-8 pr-7 py-1.5 bg-white/5 border border-white/5 rounded-xl text-[10px] font-bold appearance-none hover:border-[var(--accent)]/50 transition-all cursor-pointer"
-            >
-              <option value="all" className="bg-[#1a1a2e]">All Diseases</option>
-              <option value="Cancer Care" className="bg-[#1a1a2e]">Cancer Care</option>
-              <option value="Diabetes" className="bg-[#1a1a2e]">Diabetes</option>
-              <option value="Cardiovascular" className="bg-[#1a1a2e]">Cardiovascular</option>
-              <option value="Mental Health" className="bg-[#1a1a2e]">Mental Health</option>
-              <option value="Respiratory" className="bg-[#1a1a2e]">Respiratory</option>
-            </select>
-            <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)] pointer-events-none" />
-          </div>
-
-          {/* Agent Filter - Cascading */}
-          <div className={`relative group min-w-[180px] ${disease === 'all' ? 'opacity-50' : ''}`}>
-            <Brain size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)]" />
-            <select 
-              value={agent} 
-              disabled={disease === 'all'}
-              onChange={e => setAgent(e.target.value)}
-              className="w-full pl-8 pr-7 py-1.5 bg-white/5 border border-white/5 rounded-xl text-[10px] font-bold appearance-none hover:border-[var(--accent)]/50 transition-all cursor-pointer"
-            >
-              <option value="all" className="bg-[#1a1a2e]">All Agents</option>
-              {currentAgents.map((a, i) => a !== "All Agents" && (
-                <option key={i} value={a} className="bg-[#1a1a2e]">{a}</option>
-              ))}
-            </select>
-            <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-dim)] pointer-events-none" />
-          </div>
-
-          {/* Timeframe Filter */}
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/5 min-w-[140px]">
-            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest whitespace-nowrap">Timeframe:</span>
-            <select 
-              className="bg-transparent text-white text-[10px] font-bold outline-none cursor-pointer focus:ring-0 border-none p-0"
-              value={daysFilter}
-              onChange={(e) => setDaysFilter(parseInt(e.target.value))}
-            >
-              <option value="7" className="bg-[#1a1a2e]">Last 7 Days</option>
-              <option value="14" className="bg-[#1a1a2e]">Last 14 Days</option>
-              <option value="21" className="bg-[#1a1a2e]">Last 21 Days</option>
-              <option value="30" className="bg-[#1a1a2e]">Last 1 Month</option>
-            </select>
-          </div>
-
-          {/* Download Button */}
-          <button 
-            onClick={downloadExcel}
-            className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-[var(--accent)] hover:brightness-110 text-white text-[10px] font-black transition-all shadow-lg whitespace-nowrap"
-          >
-            <Download size={12} />
-            DOWNLOAD EXCEL
-          </button>
-        </div>
-      </div>
-        
-        <div className="card overflow-hidden border border-white/5 bg-[var(--bg-card)]">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-[#0F172A]">
-                <tr>
-                  <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">Date</th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">Disease</th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">Agent</th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">E<br/><span className="text-[8px] text-ink3">30%</span></th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">R<br/><span className="text-[8px] text-ink3">25%</span></th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">C<br/><span className="text-[8px] text-ink3">20%</span></th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">S<br/><span className="text-[8px] text-ink3">15%</span></th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">F<br/><span className="text-[8px] text-ink3">7%</span></th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">V<br/><span className="text-[8px] text-ink3">3%</span></th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-[var(--accent)] uppercase tracking-wider font-black text-center border-l border-white/5">CQS Overall</th>
-                  <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider text-center">Tier</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {(() => {
-                  const filtered = (data?.matrix || []).filter(row => {
-                    const diseaseMatch = disease === 'all' || row.disease === disease;
-                    const agentMatch = agent === 'all' || row.agent === agent;
-                    return diseaseMatch && agentMatch;
-                  });
-                  if (filtered.length === 0) {
-                    return <tr><td colSpan="11" className="px-4 py-8 text-center text-ink3">No matching matrix records found.</td></tr>;
-                  }
-                  return filtered.map((row, idx) => {
-                    let tierColor = "#EF4444"; // Explicit Red
-                    let tierLabel = "RED";
-                    let bgTier = "rgba(239, 68, 68, 0.1)"; 
-                    if (row.cqs >= 85) {
-                      tierColor = "#10B981"; // Explicit Green
-                      tierLabel = "GREEN";
-                      bgTier = "rgba(16, 185, 129, 0.1)";
-                    } else if (row.cqs >= 70) {
-                      tierColor = "#F59E0B"; // Explicit Amber
-                      tierLabel = "AMBER";
-                      bgTier = "rgba(245, 158, 11, 0.1)";
-                    }
-                    return (
-                      <tr key={idx} className="hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3 font-mono text-[10px] text-white/50">{row.date}</td>
-                        <td className="px-4 py-3 font-bold text-white/90">{row.disease}</td>
-                        <td className="px-4 py-3 font-medium text-ink2">{row.agent}</td>
-                        <td className="px-4 py-3 text-center text-white/80 font-mono">{row.E}</td>
-                        <td className="px-4 py-3 text-center text-white/80 font-mono">{row.R}</td>
-                        <td className="px-4 py-3 text-center text-white/80 font-mono">{row.C}</td>
-                        <td className="px-4 py-3 text-center text-white/80 font-mono">{row.S}</td>
-                        <td className="px-4 py-3 text-center text-white/80 font-mono">{row.F}</td>
-                        <td className="px-4 py-3 text-center text-white/80 font-mono">{row.V}</td>
-                        <td className="px-4 py-3 text-center font-black text-[14px] border-l border-white/5" style={{ color: tierColor }}>{row.cqs}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="px-2 py-1 rounded-[4px] text-[9px] font-black tracking-widest border" style={{ color: tierColor, backgroundColor: bgTier, borderColor: `${tierColor}40` }}>
-                            {tierLabel}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                })()}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </>
+            <div className="card overflow-hidden border border-white/5 bg-[var(--bg-card)]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-[#0F172A]">
+                    <tr>
+                      <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">Date</th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">Disease</th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider">Agent</th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">E<br /><span className="text-[8px] text-ink3">30%</span></th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">R<br /><span className="text-[8px] text-ink3">25%</span></th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">C<br /><span className="text-[8px] text-ink3">20%</span></th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">S<br /><span className="text-[8px] text-ink3">15%</span></th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">F<br /><span className="text-[8px] text-ink3">7%</span></th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-white uppercase tracking-wider text-center">V<br /><span className="text-[8px] text-ink3">3%</span></th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-[var(--accent)] uppercase tracking-wider font-black text-center border-l border-white/5">CQS Overall</th>
+                      <th className="px-4 py-3 font-mono text-[10px] text-ink3 uppercase tracking-wider text-center">Tier</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {(() => {
+                      const filtered = (data?.matrix || []).filter(row => {
+                        const diseaseMatch = disease === 'all' || row.disease === disease;
+                        const agentMatch = agent === 'all' || row.agent === agent;
+                        return diseaseMatch && agentMatch;
+                      });
+                      if (filtered.length === 0) {
+                        return <tr><td colSpan="11" className="px-4 py-8 text-center text-ink3">No matching matrix records found.</td></tr>;
+                      }
+                      return filtered.map((row, idx) => {
+                        let tierColor = "#EF4444";
+                        let tierLabel = "RED";
+                        let bgTier = "rgba(239, 68, 68, 0.1)";
+                        if (row.cqs >= 85) {
+                          tierColor = "#10B981";
+                          tierLabel = "GREEN";
+                          bgTier = "rgba(16, 185, 129, 0.1)";
+                        } else if (row.cqs >= 70) {
+                          tierColor = "#F59E0B";
+                          tierLabel = "AMBER";
+                          bgTier = "rgba(245, 158, 11, 0.1)";
+                        }
+                        return (
+                          <tr key={idx} className="hover:bg-white/5 transition-colors">
+                            <td className="px-4 py-3 font-mono text-[10px] text-white/50">{row.date}</td>
+                            <td className="px-4 py-3 font-bold text-white/90">{row.disease}</td>
+                            <td className="px-4 py-3 font-medium text-ink2">{row.agent}</td>
+                            <td className="px-4 py-3 text-center text-white/80 font-mono">{row.E}</td>
+                            <td className="px-4 py-3 text-center text-white/80 font-mono">{row.R}</td>
+                            <td className="px-4 py-3 text-center text-white/80 font-mono">{row.C}</td>
+                            <td className="px-4 py-3 text-center text-white/80 font-mono">{row.S}</td>
+                            <td className="px-4 py-3 text-center text-white/80 font-mono">{row.F}</td>
+                            <td className="px-4 py-3 text-center text-white/80 font-mono">{row.V}</td>
+                            <td className="px-4 py-3 text-center font-black text-[14px] border-l border-white/5" style={{ color: tierColor }}>{row.cqs}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="px-2 py-1 rounded-[4px] text-[9px] font-black tracking-widest border" style={{ color: tierColor, backgroundColor: bgTier, borderColor: `${tierColor}40` }}>
+                                {tierLabel}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )
       )}
     </div>
   );

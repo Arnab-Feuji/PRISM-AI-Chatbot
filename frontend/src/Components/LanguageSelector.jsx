@@ -6,23 +6,13 @@
 import { useState, useEffect, useRef } from "react";
 
 // ─── Language config (mirrors backend) ────────────────────────────────────────
+export const HIDDEN_LANGUAGE_CODES = ["hi", "te", "pa"];
+
 export const LANGUAGES = [
   {
     code: "en", name: "English", nativeName: "English",
     flag: "🇬🇧", script: "latin",
     hint: "Type in English",
-  },
-  {
-    code: "hi", name: "Hindi", nativeName: "हिंदी",
-    flag: "🇮🇳", script: "devanagari",
-    hint: "हिंदी में लिखें या Roman में टाइप करें",
-    romanHint: "e.g. mujhe chest mein dard hai",
-  },
-  {
-    code: "te", name: "Telugu", nativeName: "తెలుగు",
-    flag: "🇮🇳", script: "telugu",
-    hint: "తెలుగులో రాయండి లేదా Roman లో టైప్ చేయండి",
-    romanHint: "e.g. naku chest lo noppi undi",
   },
   {
     code: "es", name: "Spanish", nativeName: "Español",
@@ -31,15 +21,45 @@ export const LANGUAGES = [
     romanHint: "e.g. tengo dolor en el pecho",
   },
   {
+    code: "fr", name: "French", nativeName: "Français",
+    flag: "🇫🇷", script: "latin",
+    hint: "Écrivez votre question médicale ici",
+    romanHint: "e.g. j'ai mal à la poitrine",
+  },
+  {
+    code: "pt", name: "Portuguese", nativeName: "Português",
+    flag: "🇧🇷", script: "latin",
+    hint: "Escreva sua pergunta médica aqui",
+    romanHint: "e.g. estou com dor no peito",
+  },
+  {
+    code: "hi", name: "Hindi", nativeName: "हिंदी",
+    flag: "🇮🇳", script: "devanagari", hidden: true,
+    hint: "हिंदी में लिखें या Roman में टाइप करें",
+    romanHint: "e.g. mujhe chest mein dard hai",
+  },
+  {
+    code: "te", name: "Telugu", nativeName: "తెలుగు",
+    flag: "🇮🇳", script: "telugu", hidden: true,
+    hint: "తెలుగులో రాయండి లేదా Roman లో టైప్ చేయండి",
+    romanHint: "e.g. naku chest lo noppi undi",
+  },
+  {
     code: "pa", name: "Punjabi", nativeName: "ਪੰਜਾਬੀ",
-    flag: "🇮🇳", script: "gurmukhi",
+    flag: "🇮🇳", script: "gurmukhi", hidden: true,
     hint: "ਪੰਜਾਬੀ ਵਿੱਚ ਲਿਖੋ ਜਾਂ Roman ਵਿੱਚ ਟਾਈਪ ਕਰੋ",
     romanHint: "e.g. mera sugar level bahut zyada hai",
   },
 ];
 
+export const VISIBLE_LANGUAGES = LANGUAGES.filter(l => !l.hidden && !HIDDEN_LANGUAGE_CODES.includes(l.code));
+
 export function getLanguage(code) {
   return LANGUAGES.find(l => l.code === code) || LANGUAGES[0];
+}
+
+export function isVisibleLanguage(code) {
+  return VISIBLE_LANGUAGES.some(l => l.code === code);
 }
 
 // ─── UI STRINGS per language ───────────────────────────────────────────────────
@@ -113,6 +133,34 @@ export const UI_STRINGS = {
     questionOf:           (n, max) => `ਸਵਾਲ ${n} / ${max}`,
     feedbackThanks:       "ਤੁਹਾਡੀ ਰਾਏ ਲਈ ਧੰਨਵਾਦ!",
     translitNote:         "ਪੰਜਾਬੀ ਜਾਂ Roman ਦੋਵੇਂ ਮਨਜ਼ੂਰ ਹਨ",
+  },
+  fr: {
+    placeholder:          "Saisissez votre question médicale…",
+    send:                 "Envoyer",
+    speak:                "Parler",
+    scan:                 "Scanner une image",
+    thinking:             "PRISM réfléchit…",
+    disclaimer:           "Ne remplace pas un avis médical professionnel.",
+    rateResponse:         "Évaluer cette réponse",
+    requestPrescription:  "Demander une ordonnance",
+    skip:                 "Passer → Répondre maintenant",
+    questionOf:           (n, max) => `Question ${n} sur ${max}`,
+    feedbackThanks:       "Merci pour votre avis !",
+    translitNote:         null,
+  },
+  pt: {
+    placeholder:          "Digite sua pergunta médica…",
+    send:                 "Enviar",
+    speak:                "Falar",
+    scan:                 "Escanear imagem",
+    thinking:             "PRISM está pensando…",
+    disclaimer:           "Não substitui o aconselhamento médico profissional.",
+    rateResponse:         "Avaliar esta resposta",
+    requestPrescription:  "Solicitar receita",
+    skip:                 "Pular → Responder agora",
+    questionOf:           (n, max) => `Pergunta ${n} de ${max}`,
+    feedbackThanks:       "Obrigado pelo seu feedback!",
+    translitNote:         null,
   },
 };
 
@@ -226,7 +274,7 @@ export default function LanguageSelector({ value, onChange, compact = false }) {
           </div>
 
           {/* Language options */}
-          {LANGUAGES.map(lang => {
+          {VISIBLE_LANGUAGES.map(lang => {
             const isSelected = lang.code === value;
             const isHov = hovered === lang.code;
             return (
@@ -323,7 +371,7 @@ export default function LanguageSelector({ value, onChange, compact = false }) {
             gap: 6,
           }}>
             <span>💡</span>
-            <span>For Hindi, Telugu &amp; Punjabi: type using English keyboard — PRISM converts automatically to native script.</span>
+            <span>PRISM translates your questions and responses automatically in your selected language.</span>
           </div>
         </div>
       )}

@@ -986,7 +986,7 @@ function AgentTopicTable({ data, loading, onRestore, onRename, currentConvId, sh
       setEditingId(null);
       onRename?.();
     } catch (err) {
-      setRenameError(err.response?.data?.detail || "Rename failed — name may already exist.");
+      setRenameError(err.response?.data?.detail || "Rename failed. Please try again.");
     } finally {
       setRenaming(false);
     }

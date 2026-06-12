@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { Brain, ExternalLink } from "lucide-react";
 import StarRating from "./StarRating";
+import { formatTopicTimestamp } from "../utils/datetime";
 
 // ─── Format badge config ───────────────────────────────────────────────────────
 const FORMAT_BADGE = {
@@ -517,39 +518,44 @@ export function ConversationalMessage({
 
   // User message
   if (isUser) {
+    const timestampLabel =
+      (m.created_at ? formatTopicTimestamp(m.created_at) : null) || m.timestamp_label;
+    const bubbleStyle = {
+      background:   "var(--color-background-secondary)",
+      border:       m.nativeInput && m.nativeInput !== m.content
+        ? `1px solid ${diseaseColor}33`
+        : "1px solid var(--color-border-tertiary)",
+      borderRadius: "12px 12px 2px 12px",
+      padding:      "9px 13px",
+      fontSize:     13,
+      lineHeight:   1.6,
+      color:        "var(--color-text-primary)",
+    };
+
     return (
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10, gap: 8, animation: "slideIn .18s ease" }}>
-        {m.nativeInput && m.nativeInput !== m.content ? (
-          <div style={{ maxWidth: "68%", display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+        <div style={{ maxWidth: "68%", display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+          {m.nativeInput && m.nativeInput !== m.content ? (
+            <>
+              <div style={bubbleStyle}>{m.nativeInput}</div>
+              <div style={{ fontSize: 9, color: "var(--color-text-tertiary)", fontStyle: "italic" }}>
+                Typed: "{m.content}"
+              </div>
+            </>
+          ) : (
+            <div style={bubbleStyle}>{m.content}</div>
+          )}
+          {timestampLabel && (
             <div style={{
-              background:   "var(--color-background-secondary)",
-              border:       `1px solid ${diseaseColor}33`,
-              borderRadius: "12px 12px 2px 12px",
-              padding:      "9px 13px",
-              fontSize:     13,
-              lineHeight:   1.6,
-              color:        "var(--color-text-primary)",
+              fontSize:  9,
+              color:     "var(--color-text-tertiary)",
+              lineHeight: 1.2,
+              alignSelf: "flex-end",
             }}>
-              {m.nativeInput}
+              {timestampLabel}
             </div>
-            <div style={{ fontSize: 9, color: "var(--color-text-tertiary)", fontStyle: "italic" }}>
-              Typed: "{m.content}"
-            </div>
-          </div>
-        ) : (
-          <div style={{
-            maxWidth:     "68%",
-            background:   "var(--color-background-secondary)",
-            border:       "1px solid var(--color-border-tertiary)",
-            borderRadius: "12px 12px 2px 12px",
-            padding:      "9px 13px",
-            fontSize:     13,
-            lineHeight:   1.6,
-            color:        "var(--color-text-primary)",
-          }}>
-            {m.content}
-          </div>
-        )}
+          )}
+        </div>
         <div style={{
           width: 26, height: 26, borderRadius: "50%",
           background:   "var(--color-background-secondary)",

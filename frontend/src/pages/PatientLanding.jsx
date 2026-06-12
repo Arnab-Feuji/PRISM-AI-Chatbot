@@ -1,15 +1,28 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Activity, Brain, Globe, Zap, ArrowRight, Layers, FileDown, History, HeartPulse, Video, MessageSquare, Download, ThumbsUp, FileText } from 'lucide-react';
+import { useAuthStore } from '../store/auth';
+import BackButton from '../Components/BackButton';
 
 export default function PatientLanding() {
   const navigate = useNavigate();
+  const { user, token } = useAuthStore();
+
+  const isPatientLoggedIn = Boolean(token && user && user.role !== 'admin');
+
+  useEffect(() => {
+    if (isPatientLoggedIn) {
+      navigate('/app', { replace: true });
+    }
+  }, [isPatientLoggedIn, navigate]);
+
+  if (isPatientLoggedIn) return null;
 
   const features = [
     { icon: <Activity />, title: '5 Disease Domains', desc: 'Specialized care for chronic conditions.' },
     { icon: <Brain />, title: '30 Specialist AI Agents', desc: 'Expert companions for every health journey.' },
     { icon: <Shield />, title: 'Evidence-Based Care', desc: 'Answers backed by PubMed, CDC, and WHO.' },
-    { icon: <Globe />, title: 'Multilingual Support', desc: 'English, Spanish, Hindi, Telugu, and more.' },
+    { icon: <Globe />, title: 'Multilingual Support', desc: 'English, Spanish, French, Portuguese, and more.' },
     { icon: <Layers />, title: 'Multimodal Support', desc: 'Interact via text, images, and voice.' },
     { icon: <FileDown />, title: 'Prescription Download', desc: 'Securely download AI medical prescriptions.' },
     { icon: <History />, title: 'Long Term Memory', desc: 'Personalized longitudinal care history.' },
@@ -30,6 +43,7 @@ export default function PatientLanding() {
 
       <nav className="relative z-10 px-8 py-1 flex justify-between items-center max-w-7xl mx-auto w-full">
         <div className="flex items-center gap-2">
+          <BackButton fallbackPath="/" className="flex items-center justify-center p-2 -ml-2 rounded-lg text-gray-400 hover:text-[var(--text-main)] hover:bg-white/10 transition-all" />
           <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center font-bold shadow-lg shadow-[var(--accent)]/20 text-white">P</div>
           <span className="text-xl font-bold tracking-tight">PRISM Patient</span>
         </div>
@@ -53,7 +67,7 @@ export default function PatientLanding() {
         </p>
         <div className="flex gap-4 items-center">
           <button 
-            onClick={() => navigate('/login?role=patient')}
+            onClick={() => navigate(isPatientLoggedIn ? '/app' : '/login?role=patient')}
             className="px-8 py-3.5 rounded-xl bg-[var(--accent)] text-white font-black text-xs uppercase tracking-widest shadow-2xl shadow-[var(--accent)]/20 hover:-translate-y-1 transition-all flex items-center gap-3"
           >
             Get Started <ArrowRight size={18} />

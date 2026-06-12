@@ -4,7 +4,7 @@ import {
   Tooltip as ChartTooltip, Legend, PieChart, Pie, Cell, LineChart, Line
 } from 'recharts'
 import {
-  Search, Users, Heart, AlertCircle, Activity, ChevronRight,
+  Search, Users, Heart, AlertCircle, Activity,
   TrendingUp, Shield, MessageSquare, Smile, Compass, LifeBuoy, Info
 } from 'lucide-react'
 
@@ -82,15 +82,23 @@ export default function AdminSentiment({ data }) {
   
   const diseaseWise = data?.disease_wise || []
   const userSpecific = data?.user_specific || []
+  const TABLE_LIMIT = 10
 
-  // Filtering patients
-  const filteredPatients = userSpecific.filter(p => {
-    const matchesSearch = p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          p.email?.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesDisease = selectedDisease === 'ALL' || p.disease_code === selectedDisease
-    const matchesCategory = selectedCategory === 'ALL' || p.sentiment_category === selectedCategory
-    return matchesSearch && matchesDisease && matchesCategory
-  })
+  // Last 10 patients by most recent activity, then apply filters
+  const filteredPatients = [...userSpecific]
+    .sort((a, b) => {
+      const ta = a.last_activity_at || a.timestamp || ''
+      const tb = b.last_activity_at || b.timestamp || ''
+      return String(tb).localeCompare(String(ta))
+    })
+    .filter(p => {
+      const matchesSearch = p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            p.email?.toLowerCase().includes(searchQuery.toLowerCase())
+      const matchesDisease = selectedDisease === 'ALL' || p.disease_code === selectedDisease
+      const matchesCategory = selectedCategory === 'ALL' || p.sentiment_category === selectedCategory
+      return matchesSearch && matchesDisease && matchesCategory
+    })
+    .slice(0, TABLE_LIMIT)
 
   // Theme constants
   const CATEGORY_COLORS = {
@@ -362,8 +370,19 @@ export default function AdminSentiment({ data }) {
         </div>
       </div>
 
-      {/* Patient Specific Telemetry Table */}
+      {/* Patient Specific Telemetry Table — last 10 patients */}
       <div className="card overflow-hidden bg-[var(--bg-card)] border border-white/5 rounded-3xl shadow-2xl">
+        <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-disp font-bold text-xs uppercase tracking-wider text-[var(--text-dim)]">
+              Patient Specific Telemetry
+            </h3>
+            <p className="text-[10px] text-[var(--text-dim)] mt-0.5">
+              Showing last {TABLE_LIMIT} patients by most recent activity
+            </p>
+          </div>
+          <Badge color="var(--accent)">{filteredPatients.length} / {TABLE_LIMIT}</Badge>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead className="bg-bg3 border-b border-white/10">
@@ -375,7 +394,6 @@ export default function AdminSentiment({ data }) {
                 <th className="px-4 py-3.5 font-mono text-[10px] text-ink3 uppercase">Avg Feedback</th>
                 <th className="px-4 py-3.5 font-mono text-[10px] text-ink3 uppercase">Int. Required?</th>
                 <th className="px-4 py-3.5 font-mono text-[10px] text-ink3 uppercase">Timestamp</th>
-                <th className="px-4 py-3.5 font-mono text-[10px] text-ink3 uppercase text-right">Clinical Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -455,23 +473,13 @@ export default function AdminSentiment({ data }) {
                     <td className="px-4 py-3 font-mono text-[10px] text-[var(--text-dim)]">
                       {p.timestamp || '—'}
                     </td>
-
-                    {/* Details action */}
-                    <td className="px-4 py-3 text-right">
-                      <button 
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-dim)] hover:text-white flex items-center justify-center transition-all ml-auto"
-                        title="Open diagnostic sheet"
-                      >
-                        <ChevronRight size={14} />
-                      </button>
-                    </td>
                   </tr>
                 )
               })}
 
               {filteredPatients.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-16 text-center text-[var(--text-dim)] font-medium">
+                  <td colSpan={7} className="px-4 py-16 text-center text-[var(--text-dim)] font-medium">
                     No clinical matches found in the patient database.
                   </td>
                 </tr>

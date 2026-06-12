@@ -17,7 +17,7 @@ class PRISMImageProcessor:
             img = ImageEnhance.Contrast(img).enhance(2.0)
             img = img.filter(ImageFilter.SHARPEN)
             # Tesseract lang map
-            lang_map = {"en":"eng","hi":"hin","te":"tel","es":"spa","pa":"pan"}
+            lang_map = {"en":"eng","es":"spa","fr":"fra","pt":"por","hi":"hin","te":"tel","pa":"pan"}
             tess_lang = lang_map.get(language, "eng")
             text = pytesseract.image_to_string(img, lang=tess_lang)
             doc_type = self._classify(text)

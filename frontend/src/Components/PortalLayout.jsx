@@ -30,23 +30,25 @@ export default function PortalLayout({ children }) {
   const currentWidth = isSimulationEnabled ? deviceWidths[currentDevice] : '100%';
   const isSimulated = isSimulationEnabled && currentDevice !== 'desktop';
 
+  const useViewportLock = isSimulated || isApp || isAdmin;
+
   return (
-    <div className={`min-h-screen transition-all duration-500 bg-[var(--bg-main)] text-[var(--text-main)] ${isPatientRoute ? 'pw' : ''} flex flex-col items-center justify-center`}>
+    <div className={`${useViewportLock ? 'h-screen overflow-hidden' : 'min-h-screen'} transition-all duration-500 bg-[var(--bg-main)] text-[var(--text-main)] ${isPatientRoute ? 'pw' : ''} flex flex-col items-center ${useViewportLock ? '' : 'justify-center'}`}>
 
       {/* Device Simulation Wrapper */}
       <div 
         className={`transition-all duration-500 relative flex flex-col bg-[var(--bg-main)]
-          ${isSimulated ? 'shadow-[0_0_100px_rgba(0,0,0,0.5)] border-[8px] border-[#1a1c24] my-8 rounded-[3rem] overflow-hidden' : 'w-full'}`}
+          ${isSimulated ? 'shadow-[0_0_100px_rgba(0,0,0,0.5)] border-[8px] border-[#1a1c24] my-8 rounded-[3rem] overflow-hidden' : 'w-full h-full min-h-0'}`}
         style={{ 
           width: currentWidth,
-          height: (isSimulated || isApp) ? (isSimulated ? 'calc(100vh - 64px)' : '100vh') : 'auto',
-          minHeight: (isSimulated || isApp) ? '0' : '100vh',
+          height: isSimulated ? 'calc(100vh - 64px)' : useViewportLock ? '100%' : 'auto',
+          minHeight: useViewportLock ? '0' : '100vh',
           transform: isSimulated ? 'translate3d(0,0,0)' : 'none' // Containing block for fixed elements
         }}
       >
         {!isLanding && <UnifiedNav />}
         
-        <main className={`flex-1 transition-all duration-500 ${isApp ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'} ${!isLanding ? 'pt-16' : ''} ${isAdminIntro ? 'min-h-0' : ''}`}>
+        <main className={`flex-1 min-h-0 transition-all duration-500 ${isApp || isAdmin ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'} ${!isLanding ? 'pt-16' : ''}`}>
           {children}
         </main>
 
