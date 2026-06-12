@@ -465,7 +465,7 @@ async def get_disease(code: str, db: AsyncSession = Depends(get_db)):
             questions = await get_active_agent_questions(a.agent_id, db)
             agents_info.append({
                 "agent_id": a.agent_id, 
-                "name": a.name, 
+                "name": a.agent_name, 
                 "icon": a.icon,
                 "color": a.color, 
                 "top5_questions": questions
@@ -477,7 +477,7 @@ async def get_agent_questions(agent_id: str, db: AsyncSession = Depends(get_db))
     a = AGENTS.get(agent_id.upper())
     if not a: raise HTTPException(404, "Agent not found")
     questions = await get_active_agent_questions(a.agent_id, db)
-    return {"agent_id": a.agent_id, "name": a.name, "questions": questions}
+    return {"agent_id": a.agent_id, "name": a.agent_name, "questions": questions}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
