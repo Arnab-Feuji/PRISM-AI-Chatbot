@@ -36,6 +36,7 @@ from backend.core.history.chat_history import (
     get_history_stats,
     start_cleanup_scheduler,
     HISTORY_DAYS,
+    _format_timestamp,
 )
 from backend.core.conversation.intent_engine import (
     process_conversational_turn,
@@ -62,6 +63,11 @@ from backend.database.models import (
     create_tables, get_db, User, Conversation, Message,
     PatientFeedback, IndexedDocument, LLMCallLog, RAGASMetric,
     SystemAlert, PreRAGResult, ImageUpload, AsyncSession as AsyncSessionFactory
+)
+from backend.core.conversation.conversation_restore import build_restore_context
+from backend.core.appointments.doctor_appointments import (
+    get_doctor_availability,
+    book_doctor_slot,
 )
 from backend.middleware.auth import (
     hash_password, verify_password, create_token,
@@ -464,7 +470,7 @@ async def get_disease(code: str, db: AsyncSession = Depends(get_db)):
             questions = await get_active_agent_questions(a.agent_id, db)
             agents_info.append({
                 "agent_id": a.agent_id, 
-                "name": a.name, 
+                "name": a.agent_name, 
                 "icon": a.icon,
                 "color": a.color, 
                 "top5_questions": questions
@@ -476,7 +482,7 @@ async def get_agent_questions(agent_id: str, db: AsyncSession = Depends(get_db))
     a = AGENTS.get(agent_id.upper())
     if not a: raise HTTPException(404, "Agent not found")
     questions = await get_active_agent_questions(a.agent_id, db)
-    return {"agent_id": a.agent_id, "name": a.name, "questions": questions}
+    return {"agent_id": a.agent_id, "name": a.agent_name, "questions": questions}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -499,6 +505,45 @@ async def subscribe(req: SubscribeRequest, current: dict = Depends(get_current_u
     user.subscribed_diseases = diseases
     await db.commit()
     return {"subscription": req.tier, "subscribed_diseases": diseases}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONVERSATION RESTORE HELPERS
+# ═══════════════════════════════════════════════════════════════════════════
+def _serialize_messages(msgs):
+    return [{
+        "id": m.id, "role": m.role, "content": m.content,
+        "agent_id": m.agent_id, "confidence": m.confidence,
+        "frustration": getattr(m, "frustration", 0),
+        "citations": m.citations, "created_at": m.created_at.isoformat(),
+        "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
+        "follow_up_questions": m.follow_up_questions,
+        "generic_support": m.generic_support,
+        "response_format": m.response_format,
+        "intent": m.intent,
+        "visual_payload": m.visual_payload,
+        "route_decision": (
+            "human" if (m.agent_id or "").upper().endswith("-H")
+            else "specialist" if (m.agent_id or "").upper().endswith("-S")
+            else "primary"
+        ) if m.role == "assistant" else None,
+    } for m in msgs]
+
+
+async def _build_conversation_payload(conv, msgs, user_id, db):
+    restore_ctx = await build_restore_context(db, conv=conv, messages=msgs, user_id=user_id)
+    return {
+        "conversation": {
+            "id": conv.id, "title": conv.title, "disease_code": conv.disease_code,
+            "agent_id": conv.agent_id, "updated_at": conv.updated_at.isoformat(),
+            "is_hidden": conv.is_hidden, "escalated": getattr(conv, "escalated", False),
+            "escalation_state": restore_ctx["escalation_state"],
+            "my_booking": restore_ctx["my_booking"],
+        },
+        "messages": _serialize_messages(msgs),
+        "escalation_state": restore_ctx["escalation_state"],
+        "my_booking": restore_ctx["my_booking"],
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -526,6 +571,7 @@ async def get_messages(conv_id: str, current: dict = Depends(get_current_user), 
     return [{"id": m.id, "role": m.role, "content": m.content,
              "agent_id": m.agent_id, "confidence": m.confidence,
              "citations": m.citations, "created_at": m.created_at.isoformat(),
+             "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
              "follow_up_questions": m.follow_up_questions, "generic_support": m.generic_support,
              "response_format": m.response_format, "intent": m.intent, "visual_payload": m.visual_payload} for m in msgs]
 
@@ -546,24 +592,7 @@ async def get_last_active_conversation(current: dict = Depends(get_current_user)
     
     msg_res = await db.execute(select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at))
     msgs = msg_res.scalars().all()
-    
-    return {
-        "conversation": {
-            "id": conv.id, "title": conv.title, "disease_code": conv.disease_code,
-            "agent_id": conv.agent_id, "updated_at": conv.updated_at.isoformat(),
-            "is_hidden": conv.is_hidden
-        },
-        "messages": [{
-            "id": m.id, "role": m.role, "content": m.content,
-            "agent_id": m.agent_id, "confidence": m.confidence,
-            "citations": m.citations, "created_at": m.created_at.isoformat(),
-            "follow_up_questions": m.follow_up_questions,
-            "generic_support": m.generic_support,
-            "response_format": m.response_format,
-            "intent": m.intent,
-            "visual_payload": m.visual_payload
-        } for m in msgs]
-    }
+    return await _build_conversation_payload(conv, msgs, current["user_id"], db)
 
 
 @app.get("/api/conversations/resume/{agent_id}")
@@ -586,24 +615,7 @@ async def resume_agent_conversation(agent_id: str, current: dict = Depends(get_c
     
     msg_res = await db.execute(select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at))
     msgs = msg_res.scalars().all()
-    
-    return {
-        "conversation": {
-            "id": conv.id, "title": conv.title, "disease_code": conv.disease_code,
-            "agent_id": conv.agent_id, "updated_at": conv.updated_at.isoformat(),
-            "is_hidden": conv.is_hidden
-        },
-        "messages": [{
-            "id": m.id, "role": m.role, "content": m.content,
-            "agent_id": m.agent_id, "confidence": m.confidence,
-            "citations": m.citations, "created_at": m.created_at.isoformat(),
-            "follow_up_questions": m.follow_up_questions,
-            "generic_support": m.generic_support,
-            "response_format": m.response_format,
-            "intent": m.intent,
-            "visual_payload": m.visual_payload
-        } for m in msgs]
-    }
+    return await _build_conversation_payload(conv, msgs, current["user_id"], db)
 
 
 @app.post("/api/conversations/{conv_id}/toggle-visibility")
@@ -616,6 +628,56 @@ async def toggle_conversation_visibility(conv_id: str, current: dict = Depends(g
     conv.is_hidden = not conv.is_hidden
     await db.commit()
     return {"id": conv.id, "is_hidden": conv.is_hidden}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOCTOR APPOINTMENTS
+# ═══════════════════════════════════════════════════════════════════════════
+class BookAppointmentRequest(BaseModel):
+    agent_id: str
+    doctor_detail_id: str
+    slot_start: str
+    conversation_id: Optional[str] = None
+
+
+@app.get("/api/appointments/doctors")
+async def list_doctor_appointments(
+    disease_name: str,
+    therapeutic_area: str,
+    days: int = 7,
+    current: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_doctor_availability(
+        db,
+        disease_name=disease_name,
+        therapeutic_area=therapeutic_area,
+        user_id=current["user_id"],
+        days=days,
+    )
+
+
+@app.post("/api/appointments/book")
+async def book_doctor_appointment(
+    req: BookAppointmentRequest,
+    current: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        slot_start = datetime.fromisoformat(req.slot_start.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, "Invalid slot_start timestamp")
+    if slot_start.tzinfo is not None:
+        slot_start = slot_start.replace(tzinfo=None)
+
+    return await book_doctor_slot(
+        db,
+        user_id=current["user_id"],
+        agent_id=req.agent_id,
+        doctor_detail_id=req.doctor_detail_id,
+        slot_start=slot_start,
+        conversation_id=req.conversation_id,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1122,9 +1184,18 @@ async def chat(
     ))
     conv.total_messages = (conv.total_messages or 0) + 2
     conv.updated_at     = datetime.utcnow()
-    conv.meta_json      = meta
     if routing_result["escalation_active"]:
         conv.escalated = True
+    meta["escalation_state"] = {
+        "route_decision": route,
+        "escalation_active": routing_result["escalation_active"],
+        "escalation_monitor": routing_result["escalation_monitor"],
+        "specialist_agent": routing_result["specialist_agent"],
+        "human_agent": routing_result["human_agent"],
+        "confidence": actual_confidence,
+        "frustration_score": routing_result["frustration_score"],
+    }
+    conv.meta_json = meta
 
     # ── Persist Metrics (RAGAS, LLM Calls, Escalations) ─────────────────────
     tracker = MetricsTracker(db)
@@ -2157,13 +2228,27 @@ async def admin_ragas(current: dict = Depends(require_admin), db: AsyncSession =
 
 @app.get("/api/admin/feedback")
 async def admin_feedback(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    res = await db.execute(select(PatientFeedback).order_by(desc(PatientFeedback.created_at)).limit(100))
-    fbs = res.scalars().all()
-    return [{"id": f.id, "user_id": f.user_id, "rating": f.rating or 0,
-             "helpful": getattr(f, "helpful", True), "accurate": getattr(f, "accurate", True),
-             "agent_id": f.agent_id or "??", "disease_code": f.disease_code or "??",
-             "comment": f.comment or "", "tags": getattr(f, "tags", []),
-             "created_at": f.created_at.isoformat() if f.created_at else datetime.utcnow().isoformat()} for f in fbs]
+    res = await db.execute(
+        select(PatientFeedback, User.name, User.email)
+        .outerjoin(User, User.id == PatientFeedback.user_id)
+        .order_by(desc(PatientFeedback.created_at))
+        .limit(100)
+    )
+    rows = res.all()
+    return [{
+        "id": f.id,
+        "user_id": f.user_id,
+        "user_name": (user_name or user_email or "Unknown"),
+        "patient_name": (user_name or user_email or "Unknown"),
+        "rating": f.rating or 0,
+        "helpful": getattr(f, "helpful", True),
+        "accurate": getattr(f, "accurate", True),
+        "agent_id": f.agent_id or "??",
+        "disease_code": f.disease_code or "??",
+        "comment": f.comment or "",
+        "tags": getattr(f, "tags", []),
+        "created_at": f.created_at.isoformat() if f.created_at else datetime.utcnow().isoformat(),
+    } for f, user_name, user_email in rows]
 
 @app.get("/api/admin/scorecard")
 @app.get("/api/admin/responsible-ai/scorecard")
@@ -2178,19 +2263,18 @@ async def admin_responsible_ai_scorecard(
         logger.exception("Responsible AI scorecard failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Scorecard load failed: {exc}")
 
-@app.get("/api/admin/recommendations-360")
-@app.get("/api/admin/recommendations/360")
-async def admin_recommendations_360(
+@app.get("/api/admin/enhancement-roadmap")
+async def admin_enhancement_roadmap(
     days: int = 15,
     current: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    from backend.core.admin.recommendations import get_recommendations_360
+    from backend.core.admin.enhancement_roadmap import get_enhancement_roadmap
     try:
-        return await get_recommendations_360(db, days=min(days, 15))
+        return await get_enhancement_roadmap(db, days=min(days, 15))
     except Exception as exc:
-        logger.exception("360 recommendations failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Recommendations load failed: {exc}")
+        logger.exception("Enhancement roadmap failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Enhancement roadmap load failed: {exc}")
 
 @app.get("/api/admin/alerts")
 async def admin_alerts(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
@@ -2211,7 +2295,26 @@ async def admin_resolve_alert(alert_id: str, current: dict = Depends(require_adm
 
 @app.get("/api/admin/quality/summary")
 async def admin_quality_summary(days: int = 15, current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, func
+    from backend.database.models import Conversation
+    from backend.core.admin.admin_metrics import get_quality_summary
 
+    refreshed_at = datetime.utcnow().isoformat()
+
+    conv_res = await db.execute(select(func.count(Conversation.id)))
+    unique_conversations = int(conv_res.scalar() or 0)
+
+    overall_summary = await get_quality_summary(db, days=3650)
+    live_dimensions = overall_summary.get("dimensions") or {}
+    overall_cqs = overall_summary.get("avg_cqs") or 0
+    active_patients = overall_summary.get("active_patients") or 0
+
+    if not live_dimensions:
+        live_dimensions = {
+            "engagement": 0, "response_quality": 0, "clinical_safety": 0,
+            "session_flow": 0, "format_variety": 0, "velocity": 0,
+        }
 
     # 5 Diseases, each with 6 unique or shared agents
     disease_agents = {
@@ -2227,7 +2330,6 @@ async def admin_quality_summary(days: int = 15, current: dict = Depends(require_
     overall_E = 0; overall_R = 0; overall_C = 0; overall_S = 0; overall_F = 0; overall_V = 0
     count = 0
     
-    from datetime import datetime, timedelta
     for i in range(days):
         date_str = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
         for d, agents in disease_agents.items():
@@ -2263,16 +2365,35 @@ async def admin_quality_summary(days: int = 15, current: dict = Depends(require_
     # Reset random to not affect other parts
     random.seed()
     
+    matrix_dimensions = {
+        "engagement": round(overall_E / max(count, 1), 1),
+        "response_quality": round(overall_R / max(count, 1), 1),
+        "clinical_safety": round(overall_C / max(count, 1), 1),
+        "session_flow": round(overall_S / max(count, 1), 1),
+        "format_variety": round(overall_F / max(count, 1), 1),
+        "velocity": round(overall_V / max(count, 1), 1),
+    }
+
+    if not overall_cqs and live_dimensions:
+        overall_cqs = round(
+            live_dimensions.get("engagement", 0) * 0.30
+            + live_dimensions.get("response_quality", 0) * 0.25
+            + live_dimensions.get("clinical_safety", 0) * 0.20
+            + live_dimensions.get("session_flow", 0) * 0.15
+            + live_dimensions.get("format_variety", 0) * 0.07
+            + live_dimensions.get("velocity", 0) * 0.03,
+            1,
+        )
+
     return {
-        "dimensions": {
-            "engagement": round(overall_E / max(count, 1), 1),
-            "response_quality": round(overall_R / max(count, 1), 1),
-            "clinical_safety": round(overall_C / max(count, 1), 1),
-            "session_flow": round(overall_S / max(count, 1), 1),
-            "format_variety": round(overall_F / max(count, 1), 1),
-            "velocity": round(overall_V / max(count, 1), 1)
-        },
-        "matrix": matrix
+        "dimensions": live_dimensions if any(live_dimensions.values()) else matrix_dimensions,
+        "matrix_dimensions": matrix_dimensions,
+        "overall_cqs": overall_cqs,
+        "unique_conversations": unique_conversations,
+        "active_patients": active_patients,
+        "refreshed_at": refreshed_at,
+        "period_days": days,
+        "matrix": matrix,
     }
 
 @app.get("/api/admin/prerag/report")
@@ -2550,11 +2671,16 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
         
         # Primary disease domain (disease code)
         disease_code = "DM" # default
+        last_activity = u.created_at
+        if u.last_login and (not last_activity or u.last_login > last_activity):
+            last_activity = u.last_login
         if convs:
-            last_conv = sorted(convs, key=lambda x: x.updated_at, reverse=True)[0]
+            last_conv = sorted(convs, key=lambda x: x.updated_at or datetime.min, reverse=True)[0]
             if last_conv.disease_code in diseases:
                 disease_code = last_conv.disease_code
-                
+            if last_conv.updated_at and (not last_activity or last_conv.updated_at > last_activity):
+                last_activity = last_conv.updated_at
+
         user_results.append({
             "user_id": u.id,
             "name": u.name,
@@ -2568,7 +2694,8 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
             "sentiment_score": sentiment_score,
             "sentiment_category": category,
             "intervention_required": intervention_required,
-            "timestamp": u.created_at.strftime("%Y-%m-%d %H:%M:%S") if u.created_at else None
+            "timestamp": last_activity.strftime("%Y-%m-%d %H:%M:%S") if last_activity else None,
+            "last_activity_at": last_activity.isoformat() if last_activity else None,
         })
         
     # Calculate disease wise aggregations (registered patients only — no mock overlay)
@@ -2608,6 +2735,13 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
     reassured_count = sum(1 for u in user_results if u["sentiment_category"] == "Clinically Reassured")
     intervention_count = sum(1 for u in user_results if u["intervention_required"])
     
+    # Table shows the 10 most recently active patients
+    user_results.sort(
+        key=lambda x: x.get("last_activity_at") or "",
+        reverse=True,
+    )
+    user_specific_recent = user_results[:10]
+
     return {
         "overall_stats": {
             "total_patients": total_patients,
@@ -2618,7 +2752,7 @@ async def admin_sentiment(current: dict = Depends(require_admin), db: AsyncSessi
             "intervention_count": intervention_count
         },
         "disease_wise": disease_wise,
-        "user_specific": user_results
+        "user_specific": user_specific_recent,
     }
 
 

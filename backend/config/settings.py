@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     top_k_final: int = 10
 
     # Multilingual
-    supported_languages: str = "en,hi,te,es,pa"
+    supported_languages: str = "en,es,fr,pt,hi,te,pa"
     default_language: str = "en"
 
     # Multimodal

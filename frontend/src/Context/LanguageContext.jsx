@@ -4,14 +4,14 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { UI_STRINGS, getLanguage } from "../Components/LanguageSelector";
+import { UI_STRINGS, getLanguage, isVisibleLanguage } from "../Components/LanguageSelector";
 
 const LanguageContext = createContext(null);
 
 export function LanguageProvider({ children }) {
   const [lang, setLang] = useState(() => {
-    // Persist language preference in localStorage
-    return localStorage.getItem("prism_language") || "en";
+    const stored = localStorage.getItem("prism_language") || "en";
+    return isVisibleLanguage(stored) ? stored : "en";
   });
 
   const changeLang = useCallback((code) => {

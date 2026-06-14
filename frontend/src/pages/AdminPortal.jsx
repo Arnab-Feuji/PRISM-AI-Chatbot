@@ -11,14 +11,15 @@ import {
   AlertTriangle, Activity, TrendingUp, Upload, Search, Bell,
   CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, LogOut,
   Shield, Zap, Globe, Brain, Server, Layers, Lock, Download, Info, AlertCircle, Heart,
-  BookOpen, X, Scale, Languages, Eye, Accessibility, Target, DollarSign
+  BookOpen, X, Scale, Languages, Eye, Accessibility, DollarSign, Map
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../services/api'
 import { useAuthStore } from '../store/auth'
 import AdminQuality from './AdminQuality'
 import AdminSentiment from './AdminSentiment'
-import AdminRecommendation360 from './AdminRecommendation360'
+import AdminEnhancementRoadmap from './AdminEnhancementRoadmap'
+import BackButton from '../Components/BackButton'
 import { parseUtcDate, formatDate, formatTime, formatRelativeTime } from '../utils/datetime'
 
 // ── Shared components ──────────────────────────────────────────────────────
@@ -265,7 +266,7 @@ const NAV = [
   { id: 'escalation',   label: 'Escalations',       icon: <Activity size={15} className="text-[var(--error)]" /> },
   { id: 'revenue',      label: 'Subs & Revenue',    icon: <TrendingUp size={15} /> },
   { id: 'quality',      label: 'Quality Metrics',   icon: <Activity size={15} /> },
-  { id: 'recommend360', label: 'Recommendation 360° View', icon: <Target size={15} className="text-[var(--accent)]" /> },
+  { id: 'roadmap',       label: 'Enhancement Roadmap', icon: <Map size={15} className="text-[var(--accent)]" /> },
   { id: 'audit',        label: 'Audit Log',         icon: <FileText size={15} /> },
   { id: 'security',     label: 'Security & JWT',    icon: <Lock size={15} /> },
 ]
@@ -281,8 +282,6 @@ function formatUsd(value, digits = 6) {
 }
 
 function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry }) {
-  const [activeSubTab, setActiveSubTab] = useState('health')
-  const [retrievalTab, setRetrievalTab] = useState('cdc_pubmed')
   const [health, setHealth]       = useState(null)
   const [healthLoading, setHealthLoading] = useState(true)
   const [lastChecked, setLastChecked] = useState(null)
@@ -351,8 +350,6 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
   const llmInteractionCount = num(data?.llm_interactions ?? data?.llm_calls)
   const cdcPubMedCount = num(data?.cdc_pubmed_retrievals ?? data?.chroma_calls)
   const llmFallbackCount = num(data?.llm_fallback_retrievals ?? data?.llm_fallbacks)
-  const retrievalTotal = num(data?.retrieval_answer_total ?? (cdcPubMedCount + llmFallbackCount))
-  const clarifyingCount = num(data?.clarifying_responses)
 
   const coreMetrics = [
     { label: 'Total Patients', value: data?.users ?? '—', color: 'var(--accent)', icon: <Users size={14} />, sub: 'Registered', tip: METRIC_DESCS.patients },
@@ -363,54 +360,11 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
     { label: 'LLM Fallbacks', value: llmFallbackCount, color: '#FB923C', icon: <Brain size={14} />, sub: 'No CDC/PubMed Hit', tip: METRIC_DESCS.llm_fallbacks },
   ]
 
-  const pctOfTotal = (count) => retrievalTotal > 0
-    ? ((count / retrievalTotal) * 100).toFixed(1)
-    : '0.0'
-
-  const retrievalTabContent = {
-    cdc_pubmed: {
-      title: 'CDC / PubMed Retrieval',
-      count: cdcPubMedCount,
-      pct: pctOfTotal(cdcPubMedCount),
-      color: '#60A5FA',
-      body: 'Patient full answers where at least one retrieved chunk or citation was tagged as CDC or PubMed from the crawled source database.',
-    },
-    llm_fallback: {
-      title: 'LLM Knowledge Fallback',
-      count: llmFallbackCount,
-      pct: pctOfTotal(llmFallbackCount),
-      color: '#FB923C',
-      body: 'Patient full answers where CDC/PubMed evidence was not found in ChromaDB. The LLM generated the reply from its trained clinical knowledge plus conversation context.',
-    },
-  }
-  const activeRetrieval = retrievalTabContent[retrievalTab]
-  const retrievalSplitData = [
-    { name: 'CDC / PubMed', value: cdcPubMedCount, color: '#60A5FA' },
-    { name: 'LLM Fallback', value: llmFallbackCount, color: '#FB923C' },
-  ]
-
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       <div className="flex items-center justify-between">
         <SectionHeader title="PRISM Command Centre" sub="Global operational health and platform intelligence" />
         
-        <div className="flex items-center gap-2 bg-white/5 p-1 rounded-2xl border border-white/5">
-          <button
-            onClick={() => setActiveSubTab('health')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2
-              ${activeSubTab === 'health' ? 'bg-[var(--accent)] text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-          >
-            <Activity size={14} /> Health
-          </button>
-          <button
-            onClick={() => setActiveSubTab('llm_cost')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2
-              ${activeSubTab === 'llm_cost' ? 'bg-[#34D399] text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-          >
-            <DollarSign size={14} /> Cost of LLM
-          </button>
-        </div>
-
         <div className="hidden lg:flex items-center gap-3 bg-white/5 px-4 py-2 rounded-2xl border border-white/5">
           <div className="flex flex-col items-end">
             <div className="flex items-center gap-2">
@@ -446,292 +400,73 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
         ))}
       </div>
 
-      {activeSubTab === 'llm_cost' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-            <div className="flex items-center gap-2">
-              <DollarSign size={16} className="text-[#34D399]" />
-              <span className="text-sm font-bold text-[var(--text-main)]">LLM Cost Telemetry</span>
-              <TooltipUI title="Real-time updates" content={METRIC_DESCS.llm_cost_realtime}>
-                <span className="text-[10px] font-mono text-gray-500 cursor-help flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#34D399] animate-pulse" />
-                  Live · 10s poll
-                </span>
-              </TooltipUI>
-            </div>
-            <div className="flex items-center gap-2">
-              {llmCostSynced && (
-                <span className="text-[9px] text-gray-500 font-mono">
-                  Synced: {llmCostSynced.toLocaleTimeString()}
-                </span>
-              )}
-              <button
-                onClick={() => fetchLlmCost()}
-                disabled={llmCostLoading}
-                className="p-2 hover:bg-white/5 rounded-xl transition-all border border-white/5"
-              >
-                <RefreshCw size={14} className={llmCostLoading ? 'animate-spin' : ''} />
-              </button>
-            </div>
-          </div>
-
-          {llmCostError && (
-            <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 text-xs flex items-center gap-3">
-              <AlertTriangle size={14} /> {llmCostError}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <MetricCard
-              label="Total LLM Cost"
-              value={formatUsd(llmCost?.total_cost_usd)}
-              color="#34D399"
-              icon={<DollarSign size={14} />}
-              sub={`${llmCost?.total_calls ?? llmInteractionCount} tracked calls`}
-              tip={METRIC_DESCS.llm_total_cost}
-            />
-            <MetricCard
-              label="Avg Cost / Call"
-              value={formatUsd(llmCost?.avg_cost_per_call_usd)}
-              color="#A78BFA"
-              icon={<Zap size={14} />}
-              sub="Per API invocation"
-              tip={METRIC_DESCS.llm_cost_per_call}
-            />
-            <MetricCard
-              label="Input Token Cost"
-              value={formatUsd(llmCost?.total_input_cost_usd)}
-              color="#60A5FA"
-              icon={<Brain size={14} />}
-              sub={`${(llmCost?.total_prompt_tokens ?? 0).toLocaleString()} prompt tokens`}
-              tip={METRIC_DESCS.llm_input_cost}
-            />
-            <MetricCard
-              label="Output Token Cost"
-              value={formatUsd(llmCost?.total_output_cost_usd)}
-              color="#F472B6"
-              icon={<MessageSquare size={14} />}
-              sub={`${(llmCost?.total_completion_tokens ?? 0).toLocaleString()} completion tokens`}
-              tip={METRIC_DESCS.llm_output_cost}
-            />
-          </div>
-
-          <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5 space-y-4">
-            <TooltipUI title="How LLM cost is calculated" content={METRIC_DESCS.llm_cost_formula}>
-              <div className="cursor-help">
-                <div className="text-sm font-bold text-[var(--text-main)] flex items-center gap-2">
-                  Cost calculation
-                  <Info size={13} className="text-gray-500" />
-                </div>
-                <p className="text-[11px] text-gray-400 mt-2 leading-relaxed max-w-4xl">
-                  {llmCost?.formula || METRIC_DESCS.llm_cost_formula}
-                </p>
-                <p className="text-[10px] text-gray-500 mt-2 font-mono">
-                  Active provider: <span className="text-white">{llmCost?.active_provider || '—'}</span>
-                  {' · '}Default model: <span className="text-white">{llmCost?.active_model || '—'}</span>
-                </p>
-              </div>
+      <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+          <div className="flex items-center gap-2">
+            <DollarSign size={16} className="text-[#34D399]" />
+            <span className="text-sm font-bold text-[var(--text-main)]">LLM Cost Telemetry</span>
+            <TooltipUI title="Real-time updates" content={METRIC_DESCS.llm_cost_realtime}>
+              <span className="text-[10px] font-mono text-gray-500 cursor-help flex items-center gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#34D399] animate-pulse" />
+                Live · 10s poll
+              </span>
             </TooltipUI>
-
-            <div className="grid lg:grid-cols-2 gap-4">
-              <div className="rounded-xl border border-white/5 bg-black/20 p-4">
-                <TooltipUI title="Cost by model" content={METRIC_DESCS.llm_cost_by_model}>
-                  <div className="text-xs font-bold text-gray-300 mb-3 cursor-help flex items-center gap-1">
-                    By Model <Info size={12} className="text-gray-500" />
-                  </div>
-                </TooltipUI>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {(llmCost?.by_model || []).length === 0 ? (
-                    <div className="text-[11px] text-gray-500 py-4 text-center">No LLM calls logged yet</div>
-                  ) : (
-                    llmCost.by_model.map(row => (
-                      <div key={row.model} className="flex items-center justify-between text-[11px] py-2 border-b border-white/5 last:border-0">
-                        <div>
-                          <div className="font-mono font-bold text-white">{row.model}</div>
-                          <div className="text-gray-500 mt-0.5">
-                            {row.calls} calls · ${row.input_per_mtok}/MTok in · ${row.output_per_mtok}/MTok out
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-black text-[#34D399]">{formatUsd(row.cost_usd)}</div>
-                          <div className="text-[9px] text-gray-500">{(row.prompt_tokens + row.completion_tokens).toLocaleString()} tok</div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/5 bg-black/20 p-4">
-                <TooltipUI title="Token usage" content={METRIC_DESCS.llm_cost_tokens}>
-                  <div className="text-xs font-bold text-gray-300 mb-3 cursor-help flex items-center gap-1">
-                    By Route <Info size={12} className="text-gray-500" />
-                  </div>
-                </TooltipUI>
-                <div className="space-y-2">
-                  {(llmCost?.by_route || []).length === 0 ? (
-                    <div className="text-[11px] text-gray-500 py-4 text-center">No route breakdown yet</div>
-                  ) : (
-                    llmCost.by_route.map(row => (
-                      <div key={row.route} className="flex items-center justify-between text-[11px] py-2 border-b border-white/5 last:border-0">
-                        <div className="font-mono font-bold text-white capitalize">{row.route}</div>
-                        <div className="text-right">
-                          <div className="font-black text-[#34D399]">{formatUsd(row.cost_usd)}</div>
-                          <div className="text-[9px] text-gray-500">{row.calls} calls</div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/5 overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/5 bg-white/[0.02] text-xs font-bold text-gray-300">
-                Recent LLM calls (cost per invocation)
-              </div>
-              <div className="overflow-x-auto max-h-56 overflow-y-auto">
-                <table className="w-full text-[11px] text-left">
-                  <thead className="bg-bg3 border-b border-white/10 sticky top-0">
-                    <tr>
-                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Agent</th>
-                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Model</th>
-                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Route</th>
-                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Tokens</th>
-                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Cost</th>
-                      <th className="px-3 py-2 font-mono text-[9px] text-ink3 uppercase">Time</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {(llmCost?.recent_calls || []).map((c, i) => (
-                      <tr key={i} className="hover:bg-white/5">
-                        <td className="px-3 py-2 font-mono text-teal">{c.agent_id || '—'}</td>
-                        <td className="px-3 py-2 text-ink3">{c.model}</td>
-                        <td className="px-3 py-2 capitalize text-ink3">{c.route}</td>
-                        <td className="px-3 py-2 font-mono text-blue-400">
-                          {(c.prompt_tokens + c.completion_tokens).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-2 font-mono font-bold text-[#34D399]">{formatUsd(c.cost_usd)}</td>
-                        <td className="px-3 py-2 font-mono text-[10px] text-ink3">
-                          {c.created_at ? formatTime(c.created_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                    {(!llmCost?.recent_calls || llmCost.recent_calls.length === 0) && (
-                      <tr>
-                        <td colSpan={6} className="px-3 py-8 text-center text-ink3">No LLM calls logged yet</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="text-[11px] text-gray-500 border-t border-white/5 pt-3 leading-relaxed">
-              <span className="text-gray-300 font-semibold">Aligned with LLM Interactions ({llmInteractionCount}):</span>{' '}
-              Each interaction in the pulse row maps to a tracked API call in telemetry. Cost is derived from recorded prompt and completion tokens multiplied by the current model rate card — totals update automatically when new calls are logged or provider rates change.
-            </div>
           </div>
-        </div>
-      )}
-
-      {activeSubTab === 'health' && (
-      <>
-      {/* Retrieval breakdown tabs */}
-      <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-5 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-bold text-[var(--text-main)]">Answer Retrieval Breakdown</div>
-            <div className="text-[11px] text-gray-500 mt-0.5">
-              Retrieval total: <span className="text-white font-semibold">{retrievalTotal}</span>
-              {' '}(CDC/PubMed {cdcPubMedCount} + LLM Fallback {llmFallbackCount})
-              {data?.assistant_messages != null && (
-                <span className="block mt-0.5 text-gray-600">
-                  From {data.assistant_messages} assistant messages in PostgreSQL
-                  {data?.clarifying_responses > 0 ? ` · ${data.clarifying_responses} clarifying excluded` : ''}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/5">
+          <div className="flex items-center gap-2">
+            {llmCostSynced && (
+              <span className="text-[9px] text-gray-500 font-mono">
+                Synced: {llmCostSynced.toLocaleTimeString()}
+              </span>
+            )}
             <button
-              onClick={() => setRetrievalTab('cdc_pubmed')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${retrievalTab === 'cdc_pubmed' ? 'bg-[#60A5FA] text-white' : 'text-gray-400 hover:text-white'}`}
+              onClick={() => fetchLlmCost()}
+              disabled={llmCostLoading}
+              className="p-2 hover:bg-white/5 rounded-xl transition-all border border-white/5"
             >
-              CDC / PubMed
-            </button>
-            <button
-              onClick={() => setRetrievalTab('llm_fallback')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${retrievalTab === 'llm_fallback' ? 'bg-[#FB923C] text-white' : 'text-gray-400 hover:text-white'}`}
-            >
-              LLM Fallbacks
+              <RefreshCw size={14} className={llmCostLoading ? 'animate-spin' : ''} />
             </button>
           </div>
         </div>
 
-        {/* Stacked split bar — share of retrieval total */}
-        {retrievalTotal > 0 && (
-          <div className="space-y-2">
-            <div className="flex h-3 rounded-full overflow-hidden border border-white/5">
-              <div
-                className="h-full transition-all duration-700"
-                style={{ width: `${pctOfTotal(cdcPubMedCount)}%`, background: '#60A5FA' }}
-                title={`CDC / PubMed: ${cdcPubMedCount} (${pctOfTotal(cdcPubMedCount)}%)`}
-              />
-              <div
-                className="h-full transition-all duration-700"
-                style={{ width: `${pctOfTotal(llmFallbackCount)}%`, background: '#FB923C' }}
-                title={`LLM Fallback: ${llmFallbackCount} (${pctOfTotal(llmFallbackCount)}%)`}
-              />
-            </div>
-            <div className="flex justify-between text-[10px] font-mono text-gray-500">
-              <span><span className="text-[#60A5FA] font-bold">CDC/PubMed</span> {pctOfTotal(cdcPubMedCount)}%</span>
-              <span><span className="text-[#FB923C] font-bold">LLM Fallback</span> {pctOfTotal(llmFallbackCount)}%</span>
-            </div>
+        {llmCostError && (
+          <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 text-xs flex items-center gap-3">
+            <AlertTriangle size={14} /> {llmCostError}
           </div>
         )}
 
-        <div className="rounded-xl border border-white/5 bg-black/20 p-4">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="shrink-0">
-              <div className="text-xs uppercase tracking-wider text-gray-500">{activeRetrieval.title}</div>
-              <div className="flex items-baseline gap-3 mt-1">
-                <div className="text-3xl font-black" style={{ color: activeRetrieval.color }}>{activeRetrieval.count}</div>
-                <div className="text-sm text-gray-400">
-                  of <span className="text-white font-bold">{retrievalTotal}</span> retrievals
-                  <span className="ml-2 font-black" style={{ color: activeRetrieval.color }}>{activeRetrieval.pct}%</span>
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-gray-400 max-w-xl leading-relaxed">{activeRetrieval.body}</div>
-          </div>
-        </div>
-
-        {retrievalTotal > 0 && (
-          <div className="grid sm:grid-cols-2 gap-3">
-            {retrievalSplitData.map(item => (
-              <div key={item.name} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500">{item.name}</div>
-                  <div className="text-lg font-black mt-0.5" style={{ color: item.color }}>{item.value}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-black" style={{ color: item.color }}>{pctOfTotal(item.value)}%</div>
-                  <div className="text-[9px] text-gray-500">of total</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="text-[11px] text-gray-500 border-t border-white/5 pt-3 leading-relaxed">
-          <span className="text-gray-300 font-semibold">How this relates to LLM Interactions ({llmInteractionCount}):</span>{' '}
-          {METRIC_DESCS.llm_interactions_relation}
-          {clarifyingCount > 0 && (
-            <span className="block mt-1 text-gray-400">
-              Clarifying responses in DB: {clarifyingCount} (not included in retrieval total).
-            </span>
-          )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard
+            label="Total LLM Cost"
+            value={formatUsd(llmCost?.total_cost_usd)}
+            color="#34D399"
+            icon={<DollarSign size={14} />}
+            sub={`${llmCost?.total_calls ?? llmInteractionCount} tracked calls`}
+            tip={METRIC_DESCS.llm_total_cost}
+          />
+          <MetricCard
+            label="Avg Cost / Call"
+            value={formatUsd(llmCost?.avg_cost_per_call_usd)}
+            color="#A78BFA"
+            icon={<Zap size={14} />}
+            sub="Per API invocation"
+            tip={METRIC_DESCS.llm_cost_per_call}
+          />
+          <MetricCard
+            label="Input Token Cost"
+            value={formatUsd(llmCost?.total_input_cost_usd)}
+            color="#60A5FA"
+            icon={<Brain size={14} />}
+            sub={`${(llmCost?.total_prompt_tokens ?? 0).toLocaleString()} prompt tokens`}
+            tip={METRIC_DESCS.llm_input_cost}
+          />
+          <MetricCard
+            label="Output Token Cost"
+            value={formatUsd(llmCost?.total_output_cost_usd)}
+            color="#F472B6"
+            icon={<MessageSquare size={14} />}
+            sub={`${(llmCost?.total_completion_tokens ?? 0).toLocaleString()} completion tokens`}
+            tip={METRIC_DESCS.llm_output_cost}
+          />
         </div>
       </div>
 
@@ -854,8 +589,6 @@ function Overview({ data, llmcalls, ragas, userQuerySources, loadError, onRetry 
           </div>
         </div>
       </div>
-      </>
-      )}
     </div>
   );
 }
@@ -946,7 +679,9 @@ function RAGASSection({ data }) {
   const directionLabel = (dir) => (dir === 'lower' ? 'Lower is Better' : 'Higher is Better')
   const directionColor = (dir) => (dir === 'lower' ? 'var(--error)' : 'var(--success)')
 
+  const RECENT_EVAL_LIMIT = 20
   const rows = (data || []).slice(0, 100)
+  const recentEvaluations = rows.slice(0, RECENT_EVAL_LIMIT)
   const currentGroup = categories[activeCategory]
 
   const avg = (key) => {
@@ -1209,7 +944,11 @@ function RAGASSection({ data }) {
 
       {!showDefinitions && (
       <div className="mt-8">
-        <div className="text-sm font-bold mb-4">Recent Evaluations (Category: {currentGroup.label})</div>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="text-sm font-bold">Recent Evaluations (Category: {currentGroup.label})</div>
+          <Badge color="var(--accent)">{recentEvaluations.length} / {RECENT_EVAL_LIMIT}</Badge>
+        </div>
+        <p className="text-[10px] text-[var(--text-dim)] mb-3">Showing the last {RECENT_EVAL_LIMIT} evaluations, most recent first.</p>
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
@@ -1228,7 +967,7 @@ function RAGASSection({ data }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {(rows.length > 0 ? rows : [...Array(5)]).map((r, i) => {
+                {(rows.length > 0 ? recentEvaluations : [...Array(5)]).map((r, i) => {
                   const DISEASE_NAMES = {
                     CA: "Cancer Care",
                     DM: "Diabetes",
@@ -1673,82 +1412,8 @@ function ResponsibleAIScorecard() {
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-4 mb-6">
-        <MetricCard
-          label="Total Users"
-          value={totalUsers}
-          sub={`${totalLatamUsers} in LATAM territories`}
-          color="#2DD4BF"
-          icon={<Users size={16} />}
-          tip="Registered portal users grouped by country from the users table."
-        />
-        <MetricCard
-          label="Active Territories"
-          value={countries.length}
-          sub="Countries with registered users"
-          color="#818CF8"
-          icon={<Globe size={16} />}
-          tip="Only countries with at least one user in the database appear here."
-        />
-        <MetricCard
-          label="Patients in View"
-          value={patientCount}
-          sub={`${country} · ${disease || '—'}`}
-          color="#F472B6"
-          icon={<Activity size={16} />}
-          tip="Patients in the selected territory and disease program used to compute compliance scores."
-        />
-      </div>
-
-      {territoryChartData.length > 0 && (
-        <div className="card p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="font-disp font-bold text-sm uppercase tracking-wider text-[var(--text-dim)]">
-                Users by Territory
-              </h3>
-              <p className="text-[10px] text-[var(--text-dim)] mt-0.5">
-                Live counts from the users table — new countries appear when users register
-              </p>
-            </div>
-            <Badge color="var(--accent)">{totalUsers} total</Badge>
-          </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={territoryChartData} margin={{ top: 10, right: 15, left: 5, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis
-                  dataKey="country"
-                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
-                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
-                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                  label={{ value: 'Registered Users', angle: -90, position: 'insideLeft', offset: 10, fill: 'var(--text-dim)', fontSize: 10 }}
-                />
-                <Tooltip
-                  contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 11 }}
-                  cursor={{ fill: 'rgba(255,255,255,0.02)' }}
-                  formatter={(value) => [`${value} users`, 'Count']}
-                />
-                <Bar dataKey="users" fill="var(--accent)" radius={[8, 8, 0, 0]} name="Users">
-                  {territoryChartData.map((entry, index) => (
-                    <Cell
-                      key={`territory-${entry.country}`}
-                      fill={entry.is_latam ? (index % 2 === 0 ? 'var(--accent)' : '#818CF8') : '#64748B'}
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
-      {showDefinitions && (
-        <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-500">
+      {showDefinitions ? (
+        <div className="animate-in fade-in slide-in-from-top-2 duration-500">
           <div className="card p-6 border-[var(--accent)]/20 bg-gradient-to-br from-[var(--accent)]/5 via-transparent to-transparent">
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
@@ -1852,6 +1517,80 @@ function ResponsibleAIScorecard() {
             </div>
           </div>
         </div>
+      ) : (
+        <>
+      <div className="grid sm:grid-cols-3 gap-4 mb-6">
+        <MetricCard
+          label="Total Users"
+          value={totalUsers}
+          sub={`${totalLatamUsers} in LATAM territories`}
+          color="#2DD4BF"
+          icon={<Users size={16} />}
+          tip="Registered portal users grouped by country from the users table."
+        />
+        <MetricCard
+          label="Active Territories"
+          value={countries.length}
+          sub="Countries with registered users"
+          color="#818CF8"
+          icon={<Globe size={16} />}
+          tip="Only countries with at least one user in the database appear here."
+        />
+        <MetricCard
+          label="Patients in View"
+          value={patientCount}
+          sub={`${country} · ${disease || '—'}`}
+          color="#F472B6"
+          icon={<Activity size={16} />}
+          tip="Patients in the selected territory and disease program used to compute compliance scores."
+        />
+      </div>
+
+      {territoryChartData.length > 0 && (
+        <div className="card p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-disp font-bold text-sm uppercase tracking-wider text-[var(--text-dim)]">
+                Users by Territory
+              </h3>
+              <p className="text-[10px] text-[var(--text-dim)] mt-0.5">
+                Live counts from the users table — new countries appear when users register
+              </p>
+            </div>
+            <Badge color="var(--accent)">{totalUsers} total</Badge>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={territoryChartData} margin={{ top: 10, right: 15, left: 5, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis
+                  dataKey="country"
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--text-dim)', fontSize: 10 }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                  label={{ value: 'Registered Users', angle: -90, position: 'insideLeft', offset: 10, fill: 'var(--text-dim)', fontSize: 10 }}
+                />
+                <Tooltip
+                  contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 11 }}
+                  cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                  formatter={(value) => [`${value} users`, 'Count']}
+                />
+                <Bar dataKey="users" fill="var(--accent)" radius={[8, 8, 0, 0]} name="Users">
+                  {territoryChartData.map((entry, index) => (
+                    <Cell
+                      key={`territory-${entry.country}`}
+                      fill={entry.is_latam ? (index % 2 === 0 ? 'var(--accent)' : '#818CF8') : '#64748B'}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       )}
 
       <div className="grid lg:grid-cols-4 gap-6">
@@ -1942,6 +1681,8 @@ function ResponsibleAIScorecard() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   )
 }
@@ -1997,11 +1738,12 @@ function PreRAGSection() {
     if (!quiet) setLoading(true)
     return api.get('/admin/prerag/report')
       .then(r => {
-        setReport(r.data)
+        setReport(Array.isArray(r.data) ? r.data : [])
         setLoading(false)
       })
       .catch(err => {
-        console.error("Failed to fetch Pre-RAG report:", err)
+        console.error('Failed to fetch Pre-RAG report:', err)
+        setReport([])
         setLoading(false)
       })
   }
@@ -2736,8 +2478,13 @@ function VectorStore({ data, meta, refreshing, onRefresh }) {
   )
 }
 
+function feedbackPatientName(f) {
+  return f?.user_name || f?.patient_name || f?.name || 'Unknown'
+}
+
 function Feedback({ data }) {
   const [disease, setDisease] = useState('ALL')
+  const [rows, setRows] = useState(data || [])
   const DISEASES = [
     { code: 'ALL', name: 'All Specialties' },
     { code: 'CA',  name: 'Cancer Care' },
@@ -2747,8 +2494,18 @@ function Feedback({ data }) {
     { code: 'RS',  name: 'Respiratory' }
   ]
 
-  const filtered = disease === 'ALL' ? (data || []) : (data || []).filter(f => f.disease_code?.startsWith(disease))
-  const critical = (data || []).filter(f => f.rating < 5).slice(0, 10)
+  useEffect(() => {
+    setRows(data || [])
+  }, [data])
+
+  useEffect(() => {
+    api.get('/admin/feedback')
+      .then(r => setRows(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setRows(data || []))
+  }, [])
+
+  const filtered = disease === 'ALL' ? (rows || []) : (rows || []).filter(f => f.disease_code?.startsWith(disease))
+  const critical = (rows || []).filter(f => f.rating < 5).slice(0, 10)
   
   const dist = [5, 4, 3, 2, 1].map(r => ({
     rating: r,
@@ -2847,13 +2604,14 @@ function Feedback({ data }) {
         </div>
         <table className="w-full text-xs">
           <thead className="bg-bg3">
-            <tr>{['Rating','Agent','Disease','Comment','Date'].map(h => (
+            <tr>{['Username','Rating','Agent','Disease','Comment','Date'].map(h => (
               <th key={h} className="px-4 py-3 text-left font-mono text-ink3 text-[10px] uppercase tracking-wider">{h}</th>
             ))}</tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {filtered.slice(0, 30).map((f, i) => (
               <tr key={i} className="hover:bg-white/5 transition-colors">
+                <td className="px-4 py-3 font-semibold text-white">{feedbackPatientName(f)}</td>
                 <td className="px-4 py-3">
                   <div className="flex gap-0.5">
                     {[...Array(5)].map((_, idx) => (
@@ -2881,7 +2639,7 @@ function Feedback({ data }) {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-12 text-center text-[var(--text-dim)]">No feedback entries found for this specialty.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-12 text-center text-[var(--text-dim)]">No feedback entries found for this specialty.</td></tr>
             )}
           </tbody>
         </table>
@@ -3524,34 +3282,79 @@ function UserSpecificSection({ data }) {
   )
 }
 
-function Documents({ data }) {
+function Documents({ data: parentData }) {
+  const [rows, setRows] = useState(Array.isArray(parentData) ? parentData : [])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
+
+  useEffect(() => {
+    if (Array.isArray(parentData) && parentData.length > 0) {
+      setRows(parentData)
+    }
+  }, [parentData])
+
+  const loadDocuments = (quiet = false) => {
+    if (!quiet) setLoading(true)
+    setLoadError(null)
+    return api.get('/admin/documents')
+      .then(r => {
+        const list = Array.isArray(r.data) ? r.data : []
+        setRows(list)
+      })
+      .catch(err => {
+        console.error('[Admin] indexed documents load failed', err)
+        const detail = err?.response?.data?.detail
+        setLoadError(typeof detail === 'string' ? detail : 'Could not load indexed documents')
+      })
+      .finally(() => { if (!quiet) setLoading(false) })
+  }
+
+  useEffect(() => { loadDocuments() }, [])
+
   return (
     <div>
-      <SectionHeader title="Indexed Documents" sub="All documents in PRISM knowledge base" />
+      <SectionHeader title="Indexed Documents" sub={`All documents in PRISM knowledge base${rows.length ? ` · ${rows.length} indexed` : ''}`} />
       <div className="card overflow-hidden">
-        <table className="w-full text-xs">
-          <thead className="bg-bg3"><tr>{['Title','Agent','Disease','Source','Chunks','Pre-RAG','Date'].map(h => <th key={h} className="px-3 py-2.5 text-left font-mono text-ink3 text-[10px] uppercase">{h}</th>)}</tr></thead>
-          <tbody>
-            {(data || []).map((d, i) => (
-              <tr key={i} className={i % 2 === 0 ? 'bg-bg2' : 'bg-bg1'}>
-                <td className="px-3 py-2 text-ink2 max-w-xs truncate">{d.title}</td>
-                <td className="px-3 py-2 font-mono text-teal">{d.agent_id}</td>
-                <td className="px-3 py-2 text-ink3">{d.disease_code}</td>
-                <td className="px-3 py-2 text-ink3">{d.source?.slice(0,20)}</td>
-                <td className="px-3 py-2 font-mono text-gold">{d.chunk_count}</td>
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="bg-bg3 border-b border-line text-[var(--text-dim)] font-mono uppercase tracking-widest text-[10px]">
+              {['Title', 'Agent', 'Disease', 'Source', 'Chunks', 'Pre-RAG', 'Date'].map(h => (
+                <th key={h} className="px-3 py-2.5 text-left">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {loading ? (
+              <tr><td colSpan={7} className="px-3 py-10 text-center text-[var(--text-dim)] animate-pulse">Loading indexed documents…</td></tr>
+            ) : loadError ? (
+              <tr>
+                <td colSpan={7} className="px-3 py-10 text-center">
+                  <p className="text-[var(--error)] text-sm mb-3">{loadError}</p>
+                  <button type="button" onClick={() => loadDocuments()} className="text-[11px] font-bold text-[var(--accent)] hover:underline">Retry</button>
+                </td>
+              </tr>
+            ) : rows.map((d, i) => (
+              <tr key={d.id || `${d.title}-${i}`} className="hover:bg-white/5 transition-colors">
+                <td className="px-3 py-2 text-[var(--text-main)] max-w-xs truncate" title={d.title}>{d.title || 'Untitled'}</td>
+                <td className="px-3 py-2 font-mono text-teal">{d.agent_id || '—'}</td>
+                <td className="px-3 py-2 text-[var(--text-dim)]">{d.disease_code || '—'}</td>
+                <td className="px-3 py-2 text-[var(--text-dim)] max-w-[140px] truncate" title={d.source}>{d.source || '—'}</td>
+                <td className="px-3 py-2 font-mono text-gold">{d.chunk_count ?? 0}</td>
                 <td className="px-3 py-2">
-                  {d.prerag_tier ? (
+                  {d.prerag_tier && d.prerag_tier !== 'PENDING' ? (
                     <Badge color={d.prerag_tier === 'GOLD' ? 'var(--warning)' : d.prerag_tier === 'SILVER' ? 'var(--accent)' : 'var(--error)'}>
                       {d.prerag_tier}
                     </Badge>
                   ) : (
-                    <span className="text-[9px] font-bold text-white/20 uppercase tracking-tighter">Not Analyzed</span>
+                    <span className="text-[9px] font-bold text-[var(--text-dim)] uppercase tracking-tighter">Pending</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-ink3">{d.created_at?.slice(0,10)}</td>
+                <td className="px-3 py-2 text-[var(--text-dim)]">{d.created_at?.slice(0, 10) || '—'}</td>
               </tr>
             ))}
-            {(!data || data.length === 0) && <tr><td colSpan={7} className="px-3 py-10 text-center text-ink3">No documents yet</td></tr>}
+            {!loading && !loadError && rows.length === 0 && (
+              <tr><td colSpan={7} className="px-3 py-10 text-center text-[var(--text-dim)]">No documents yet. Upload or crawl documents to populate the knowledge base.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -3634,7 +3437,11 @@ export default function AdminPortal() {
         console.error('[Admin] overview load failed', ov.reason)
       }
       if (rg.status === 'fulfilled') setRagas(rg.value.data)
-      if (dc.status === 'fulfilled') setDocs(dc.value.data)
+      if (dc.status === 'fulfilled') {
+        setDocs(Array.isArray(dc.value.data) ? dc.value.data : [])
+      } else {
+        console.error('[Admin] documents load failed in batch', dc.reason)
+      }
       if (fb.status === 'fulfilled') setFb(fb.value.data)
       if (al.status === 'fulfilled') setAlerts(al.value.data)
       if (vs.status === 'fulfilled') applyVectorStorePayload(vs.value.data)
@@ -3669,6 +3476,21 @@ export default function AdminPortal() {
     return () => clearInterval(timer)
   }, [active])
 
+  const loadDocuments = async () => {
+    try {
+      const { data } = await api.get('/admin/documents')
+      setDocs(Array.isArray(data) ? data : [])
+    } catch (e) {
+      console.error('[Admin] documents refresh failed', e)
+    }
+  }
+
+  useEffect(() => {
+    if (active !== 'documents') return undefined
+    loadDocuments()
+    return undefined
+  }, [active])
+
   const resolveAlert = async (id) => {
     try { await api.put(`/admin/alerts/${id}/resolve`); setAlerts(a => a.filter(x => x.id !== id)); toast.success('Alert resolved') }
     catch { toast.error('Failed') }
@@ -3688,7 +3510,7 @@ export default function AdminPortal() {
       case 'patients':    return <ComingSoon title="Patient Management" sub="Real-time patient trajectory tracking and EHR synchronization is currently in development." />
       case 'agents':      return <AgentPerformance ragas={ragas} />
       case 'quality':     return <AdminQuality />
-      case 'recommend360': return <AdminRecommendation360 />
+      case 'roadmap':       return <AdminEnhancementRoadmap onNavigate={setActive} />
       case 'alerts':      return <Alerts data={alerts} onResolve={resolveAlert} />
       case 'routing':     return <AdminSmartRouting />
       case 'escalation':  return <AdminEscalationDashboard />
@@ -3700,7 +3522,7 @@ export default function AdminPortal() {
   }
 
   return (
-    <div className="h-screen bg-[var(--bg-main)] flex text-[var(--text-main)] overflow-hidden selection:bg-[var(--accent)]/30 transition-all duration-500">
+    <div className="h-full min-h-0 bg-[var(--bg-main)] flex text-[var(--text-main)] overflow-hidden selection:bg-[var(--accent)]/30 transition-all duration-500">
       {/* Sidebar */}
       <aside className="w-56 bg-[var(--bg-card)] border-r border-white/10 flex flex-col flex-shrink-0 overflow-y-auto shadow-2xl z-30 transition-all duration-500">
         <div className="p-4 border-b border-line">
@@ -3735,8 +3557,9 @@ export default function AdminPortal() {
 
       {/* Main */}
       <main className="flex-1 overflow-y-auto bg-[var(--bg-main)] transition-all duration-500">
-        <header className="sticky top-0 bg-[var(--bg-card)] border-b border-[var(--border)] px-8 py-4 flex items-center justify-between z-20 shadow-sm">
-          <div className="flex items-center gap-6">
+        <header className="sticky top-0 bg-[var(--bg-main)]/80 backdrop-blur-md border-b border-white/5 px-8 py-4 flex items-center justify-between z-20">
+          <div className="flex items-center gap-3">
+            <BackButton fallbackPath="/admin-intro" className="flex items-center justify-center p-2 -ml-2 rounded-lg text-[var(--text-dim)] hover:text-[var(--text-main)] hover:bg-white/5 transition-all" />
             <h1 className="text-lg font-black tracking-tight text-[var(--text-main)]">{NAV.find(n => n.id === active)?.label}</h1>
           </div>
           <button onClick={loadAll} disabled={loading}

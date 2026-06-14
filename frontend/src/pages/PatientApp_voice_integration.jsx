@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import api from "../services/api";
 import { LogOut, User as UserIcon, Send, ChevronRight, Lock, MessageSquare, ExternalLink, Brain, Activity, RefreshCw, Plus, FileText, Download, Trash2 } from "lucide-react";
+import BackButton from "../Components/BackButton";
 import ImageUpload, { ImageAnalysisMessage } from "../Components/ImageUpload";
 import VoiceChat, { VoiceMessage } from "../Components/VoiceChat";
 import LanguageSelector from "../Components/LanguageSelector";
@@ -141,6 +142,7 @@ export default function PatientApp() {
   const [humanAgent, setHumanAgent]           = useState(null);
   const [confidence, setConfidence]           = useState(null);
   const [showHumanCard, setShowHumanCard]     = useState(false);
+  const [restoredBooking, setRestoredBooking] = useState(null);
 
   // Conversational Engine state
   const [isAskingQuestions, setIsAskingQuestions] = useState(false);
@@ -215,6 +217,30 @@ export default function PatientApp() {
     }
   }, [messages]);
 
+  const applyRestoreContext = useCallback((data) => {
+    const escalation = data?.escalation_state || data?.conversation?.escalation_state;
+    const myBooking = data?.my_booking || data?.conversation?.my_booking || null;
+
+    if (escalation?.route_decision) {
+      setEscalationData(escalation.escalation_monitor || null);
+      setRouteDecision(escalation.route_decision);
+      setSpecialistAgent(escalation.specialist_agent || null);
+      setHumanAgent(escalation.human_agent || null);
+      setConfidence(escalation.confidence ?? null);
+      setShowHumanCard(escalation.route_decision === "human");
+    } else {
+      setEscalationData(null);
+      setRouteDecision("primary");
+      setSpecialistAgent(null);
+      setHumanAgent(null);
+      setConfidence(null);
+      setShowHumanCard(false);
+    }
+
+    setRestoredBooking(myBooking);
+    return myBooking;
+  }, []);
+
   const handleRestoreConversation = useCallback((data, options = {}) => {
     const { conversation, messages: histMessages } = data;
     if (!conversation) return;
@@ -234,6 +260,8 @@ export default function PatientApp() {
       role:             m.role,
       content:          m.content,
       id:               m.id,
+      created_at:       m.created_at,
+      timestamp_label:  m.timestamp_label,
       isVoice:          m.is_voice,
       response_type:    m.is_image ? "image_analysis" : "answer",
       confidence:       m.confidence,
@@ -243,6 +271,8 @@ export default function PatientApp() {
       genericSupport:    m.generic_support || [],
       responseFormat:    m.response_format,
       intent:            m.intent,
+      routeDecision:     m.route_decision,
+      frustration:       m.frustration,
     })));
 
     if (scrollToMessageId) {
@@ -250,14 +280,8 @@ export default function PatientApp() {
     }
 
     setIsHistoryHidden(conversation.is_hidden || false);
-
-    setEscalationData(null);
-    setRouteDecision("primary");
-    setSpecialistAgent(null);
-    setHumanAgent(null);
-    setConfidence(null);
-    setShowHumanCard(false);
-  }, []);
+    applyRestoreContext(data);
+  }, [applyRestoreContext]);
 
   // Reset escalation state when agent changes + Resume Session Logic
   const selectAgent = useCallback(async (disease, agent) => {
@@ -274,6 +298,7 @@ export default function PatientApp() {
     setHumanAgent(null);
     setConfidence(null);
     setShowHumanCard(false);
+    setRestoredBooking(null);
     setDynamicQuestions([]); 
 
     try {
@@ -403,7 +428,8 @@ export default function PatientApp() {
     if (!msg || !selAgent) return;
     setInput("");
 
-    const userMsg = { role: "user", content: msg, id: Date.now() };
+    const now = new Date().toISOString();
+    const userMsg = { role: "user", content: msg, id: Date.now(), created_at: now };
     setMessages(m => [...m, userMsg]);
     setLoading(true);
 
@@ -442,6 +468,9 @@ export default function PatientApp() {
 
       if (data.route_decision === "human") {
         setShowHumanCard(true);
+      }
+      if (data.my_booking) {
+        setRestoredBooking(data.my_booking);
       }
 
       setMessages(m => {
@@ -486,10 +515,12 @@ export default function PatientApp() {
 
   const handleImageAnalysis = (data) => {
     if (!convId) setConvId(data.conversation_id);
+    const now = new Date().toISOString();
     setMessages(m => [...m, {
       role: "user",
       content: `[Image: ${data.image_label}]`,
-      id: Date.now()
+      id: Date.now(),
+      created_at: now,
     }, {
       role: "assistant",
       content: data.response,
@@ -514,7 +545,11 @@ export default function PatientApp() {
   const handleVoiceMessage = (msgObj) => {
     // msgObj: {role, content, isVoice, voiceData, id, respondedBy, etc}
     if (!convId && msgObj.conversation_id) setConvId(msgObj.conversation_id);
-    setMessages(m => [...m, { ...msgObj, id: msgObj.id || Date.now() }]);
+    setMessages(m => [...m, {
+      ...msgObj,
+      id: msgObj.id || Date.now(),
+      created_at: msgObj.created_at || new Date().toISOString(),
+    }]);
     setIsHistoryHidden(false); // Auto-restore on voice message
   };
 
@@ -538,7 +573,6 @@ export default function PatientApp() {
         selDisease={selDisease}
         selAgent={selAgent}
         onSelectAgent={selectAgent}
-        onToggleHistory={() => setShowChatHistory(true)}
       />
 
 
@@ -557,7 +591,6 @@ export default function PatientApp() {
               onLogout={onLogout}
               onOpenPrescription={() => setPrescriptionModalOpen(true)}
               onOpenHistory={() => { setHistoryModalOpen(true); setHistoryAck(true); }}
-              onToggleHistory={() => setShowChatHistory(true)}
               canRequestPrescription={!!convId}
               lang={lang}
               changeLang={changeLang}
@@ -569,28 +602,14 @@ export default function PatientApp() {
         {/* NavBar when no agent selected */}
         {!selAgent && (
           <div style={{ padding: "0 20px", height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
-            <div style={{ fontWeight: 800, fontSize: 16, color: "var(--text-main)", tracking: "tight" }}>PRISM</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <BackButton
+                fallbackPath="/patient"
+                style={{ background: "transparent", border: "none", padding: 8, cursor: "pointer", color: "#64748B", display: "flex", alignItems: "center" }}
+              />
+              <div style={{ fontWeight: 800, fontSize: 16, color: "var(--text-main)", tracking: "tight" }}>PRISM</div>
+            </div>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button
-                onClick={() => setShowChatHistory(true)}
-                title="View chat history (last 15 days)"
-                style={{
-                  display:      "flex",
-                  alignItems:   "center",
-                  gap:          5,
-                  padding:      "6px 10px",
-                  background:   "transparent",
-                  border:       "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 8,
-                  fontSize:     12,
-                  color:        "#94A3B8",
-                  cursor:       "pointer",
-                  fontFamily:   "inherit",
-                  fontWeight:   500,
-                }}
-              >
-                🕐 History
-              </button>
               <button 
                 onClick={onLogout} 
                 title="Sign out"
@@ -694,13 +713,31 @@ export default function PatientApp() {
             </div>
           ))}
 
-          {/* Human Coordinator Card — appears after human escalation */}
+          {/* Human Coordinator Card — appears after human escalation or on restore */}
           {showHumanCard && humanAgent && routeDecision === "human" && (
             <HumanCoordinatorCard
               humanAgent={humanAgent}
               disease={selDisease}
+              agent={selAgent}
+              conversationId={convId}
+              initialBooking={restoredBooking}
+              onBookingUpdate={setRestoredBooking}
               onDismiss={() => setShowHumanCard(false)}
             />
+          )}
+
+          {/* Specialist escalation banner on restore */}
+          {routeDecision === "specialist" && specialistAgent && messages.length > 0 && (
+            <EscalationStatusBanner
+              type="specialist"
+              agent={specialistAgent}
+              disease={selDisease}
+            />
+          )}
+
+          {/* Booking summary when not shown inside human coordinator card */}
+          {restoredBooking && routeDecision !== "human" && (
+            <BookingSummaryBanner booking={restoredBooking} />
           )}
 
           {/* Loading indicator */}
@@ -724,32 +761,71 @@ export default function PatientApp() {
             />
           )}
 
-        {/* Restore / Delete Button */}
-        {selAgent && convId && (
-          <div style={{ display: "flex", justifyContent: "center", paddingBottom: 8 }}>
-            <button 
-              onClick={handleToggleVisibility}
-              style={{
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                padding: "6px 14px",
-                borderRadius: 20,
-                cursor: "pointer",
-                color: isHistoryHidden ? "#F37029" : "#94A3B8",
-                fontSize: 11,
-                fontWeight: 700,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                transition: "all 0.2s ease",
-                boxShadow: "0 2px 5px rgba(0,0,0,0.2)"
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
-              onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
-            >
-              {isHistoryHidden ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-              {isHistoryHidden ? "Restore History" : "Delete / Restore"}
-            </button>
+        {/* Chat actions — bottom of chat area */}
+        {selAgent && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            padding: "0 16px 10px",
+            gap: 8,
+            flexShrink: 0,
+          }}>
+            <div />
+            <div style={{ justifySelf: "center" }}>
+              {convId && (
+                <button
+                  onClick={handleToggleVisibility}
+                  style={{
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    padding: "6px 14px",
+                    borderRadius: 20,
+                    cursor: "pointer",
+                    color: isHistoryHidden ? "#F37029" : "#94A3B8",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.2s ease",
+                    boxShadow: "0 2px 5px rgba(0,0,0,0.2)",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                >
+                  {isHistoryHidden ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                  {isHistoryHidden ? "Restore History" : "Delete / Restore"}
+                </button>
+              )}
+            </div>
+            <div style={{ justifySelf: "end" }}>
+              <button
+                onClick={() => setShowChatHistory(true)}
+                title="View chat history (last 15 days)"
+                style={{
+                  background: "var(--grad-primary)",
+                  border: "none",
+                  padding: "8px 18px",
+                  borderRadius: 22,
+                  cursor: "pointer",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  transition: "all 0.2s ease",
+                  boxShadow: "0 2px 8px var(--accent-glow)",
+                  fontFamily: "inherit",
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-1px)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; }}
+              >
+                <RefreshCw size={15} /> Chat History
+              </button>
+            </div>
           </div>
         )}
 
@@ -865,58 +941,47 @@ export default function PatientApp() {
 }
 
 // ─── Disease Sidebar ───────────────────────────────────────────────────────────
-function DiseaseSidebar({ diseases, subs, selDisease, selAgent, onSelectAgent, onToggleHistory }) {
+function DiseaseSidebar({ diseases, subs, selDisease, selAgent, onSelectAgent }) {
   const finalVisible = diseases;
+  const [expandedCode, setExpandedCode] = useState(null);
+
+  useEffect(() => {
+    if (selDisease?.code) setExpandedCode(selDisease.code);
+  }, [selDisease?.code]);
+
+  const handleDiseaseClick = (d) => {
+    if (expandedCode === d.code) {
+      setExpandedCode(null);
+      return;
+    }
+    setExpandedCode(d.code);
+    if (d.agents[0]) onSelectAgent(d, d.agents[0]);
+  };
 
   return (
     <aside style={{ width: 220, background: "var(--bg-main)", borderRight: "1px solid var(--border)", overflowY: "hidden", flexShrink: 0, display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "16px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-        <button
-          onClick={onToggleHistory}
-          style={{
-            width: "100%",
-            padding: "12px",
-            background: "var(--grad-primary)",
-            border: "none",
-            borderRadius: 12,
-            color: "#fff",
-            fontSize: 14,
-            fontWeight: 800,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-            cursor: "pointer",
-            boxShadow: "0 4px 12px var(--accent-glow)",
-            transition: "all 0.2s ease",
-            fontFamily: "inherit"
-          }}
-          onMouseOver={e => e.currentTarget.style.transform = "translateY(-2px)"}
-          onMouseOut={e => e.currentTarget.style.transform = "translateY(0)"}
-        >
-          <RefreshCw size={18} /> Chat History
-        </button>
-      </div>
-
       <div style={{ padding: "10px 8px", flex: 1, overflowY: "auto" }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: "#94A3B8", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8, padding: "0 6px" }}>Disease Domains</div>
         {finalVisible.map(d => {
-          const has    = true; // Since we filtered, they all have it
-          const active = selDisease?.code === d.code;
+          const selected = selDisease?.code === d.code;
+          const expanded = expandedCode === d.code;
           return (
             <div key={d.code} style={{ marginBottom: 4 }}>
               <button
-                onClick={() => { if (d.agents[0]) onSelectAgent(d, d.agents[0]); }}
-                style={{ width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 12, border: "none", background: active ? "var(--accent-glow)" : "transparent", color: active ? "var(--accent)" : "var(--text-dim)", fontWeight: active ? 700 : 500, fontSize: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", transition: "all .2s ease", fontFamily: "inherit" }}
+                onClick={() => handleDiseaseClick(d)}
+                style={{ width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 12, border: "none", background: selected || expanded ? "var(--accent-glow)" : "transparent", color: selected || expanded ? "var(--accent)" : "var(--text-dim)", fontWeight: selected || expanded ? 700 : 500, fontSize: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", transition: "all .2s ease", fontFamily: "inherit" }}
               >
                 <span style={{ fontSize: 16 }}>{d.icon}</span>{d.name}
               </button>
-              {active && (
+              {expanded && (
                 <div style={{ paddingLeft: 12, marginTop: 4, marginBottom: 8, borderLeft: "2px solid var(--accent-glow)", marginLeft: 20 }}>
                   {d.agents.map(a => (
                     <button
                       key={a.id}
-                      onClick={() => onSelectAgent(d, a)}
+                      onClick={() => {
+                        setExpandedCode(d.code);
+                        onSelectAgent(d, a);
+                      }}
                       title={a.fullName}
                       style={{ width: "100%", textAlign: "left", padding: "6px 12px", borderRadius: 8, border: "none", background: selAgent?.id === a.id ? "var(--accent-glow)" : "transparent", color: selAgent?.id === a.id ? "var(--accent)" : "var(--text-dim)", fontSize: 12, fontWeight: selAgent?.id === a.id ? 600 : 400, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 2, transition: "all .2s ease", fontFamily: "inherit" }}
                     >
@@ -934,7 +999,7 @@ function DiseaseSidebar({ diseases, subs, selDisease, selAgent, onSelectAgent, o
 }
 
 // ─── Agent Header Bar ──────────────────────────────────────────────────────────
-function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLogout, onOpenPrescription, onOpenHistory, onToggleHistory, canRequestPrescription, lang, changeLang }) {
+function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLogout, onOpenPrescription, onOpenHistory, canRequestPrescription, lang, changeLang }) {
   const routeBadge = {
     primary:    { label: "Primary",    color: "#34D399", bg: "rgba(52, 211, 153, 0.1)" },
     specialist: { label: "Specialist", color: "#F5C842", bg: "rgba(245, 200, 66, 0.1)" },
@@ -943,6 +1008,10 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
 
   return (
     <div style={{ padding: "12px 20px", background: "var(--bg-card)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+      <BackButton
+        fallbackPath="/app"
+        style={{ background: "transparent", border: "none", padding: 8, cursor: "pointer", color: "#64748B", display: "flex", alignItems: "center", flexShrink: 0 }}
+      />
       <div style={{ width: 40, height: 40, rounded: "12px", background: "var(--accent-glow)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{agent.icon}</div>
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 800, fontSize: 18, color: "var(--text-main)", letterSpacing: "-0.01em" }}>{disease?.name}</div>
@@ -951,19 +1020,16 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
 
       {canRequestPrescription && (
         <>
-          <button 
-            onClick={onToggleHistory}
-            title="View chat history (last 15 days)"
-            style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", padding: "8px 12px", borderRadius: 10, cursor: "pointer", color: "#94A3B8", fontSize: 12, fontWeight: 600, transition: "all 0.2s" }}
-          >
-            <RefreshCw size={14} /> History
-          </button>
-
-          <button 
+          <button
             onClick={onOpenHistory}
-            style={{ background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.2)", padding: "6px 12px", borderRadius: 8, cursor: "pointer", color: "var(--accent)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginRight: 8 }}
+            title="Download chat history"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.2)",
+              width: 36, height: 36, borderRadius: 10, cursor: "pointer", color: "var(--accent)",
+            }}
           >
-            <Download size={14} /> Download History
+            <Download size={18} />
           </button>
 
           <button 
@@ -991,41 +1057,419 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
 
 
 // ─── Human Coordinator Card ────────────────────────────────────────────────────
-function HumanCoordinatorCard({ humanAgent, disease, onDismiss }) {
+function HumanCoordinatorCard({ humanAgent, disease, agent, conversationId, initialBooking, onBookingUpdate, onDismiss }) {
+  const [showAppointments, setShowAppointments] = useState(false);
+  const [confirmPopup, setConfirmPopup] = useState(null);
+  const [availability, setAvailability] = useState(
+    initialBooking ? { my_booking: initialBooking, doctors: [] } : null
+  );
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
+  const diseaseQueryName = disease?.code === "MH" ? "Mental Illness" : disease?.name;
+  const therapeuticArea = agent?.fullName;
+
+  const loadAvailability = useCallback(async () => {
+    if (!diseaseQueryName || !therapeuticArea) return;
+    setLoadingSlots(true);
+    try {
+      const { data } = await api.get("/appointments/doctors", {
+        params: {
+          disease_name: diseaseQueryName,
+          therapeutic_area: therapeuticArea,
+          days: 7,
+        },
+      });
+      setAvailability(data);
+    } catch (e) {
+      console.error("Failed to load doctor availability:", e);
+      setAvailability({ doctors: [], next_available: null, my_booking: initialBooking || null });
+    } finally {
+      setLoadingSlots(false);
+    }
+  }, [diseaseQueryName, therapeuticArea, initialBooking]);
+
+  useEffect(() => {
+    if (initialBooking) {
+      setAvailability(prev => ({ ...(prev || {}), my_booking: initialBooking }));
+    }
+  }, [initialBooking]);
+
+  useEffect(() => {
+    loadAvailability();
+  }, [loadAvailability]);
+
+  const handleConfirmBooking = async (doctorId, slot) => {
+    const { data } = await api.post("/appointments/book", {
+      agent_id: agent?.id,
+      doctor_detail_id: doctorId,
+      slot_start: slot.slot_start,
+      conversation_id: conversationId || undefined,
+    });
+    await loadAvailability();
+    if (onBookingUpdate) {
+      onBookingUpdate({
+        booking_id: data.booking_id,
+        doctor_id: doctorId,
+        doctor_name: data.doctor_name,
+        disease_name: data.disease_name,
+        therapeutic_area: data.therapeutic_area,
+        slot_start: data.slot_start,
+        slot_end: data.slot_end,
+        label: data.label,
+        day_label: new Date(data.slot_start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+        conversation_id: conversationId,
+      });
+    }
+    return data;
+  };
+
+  const activeBooking = availability?.my_booking || initialBooking;
+  const nextAvailableLabel = activeBooking
+    ? `Your booking: ${activeBooking.doctor_name} · ${activeBooking.day_label} · ${activeBooking.label}`
+    : availability?.next_available?.label
+    || (loadingSlots ? "Loading availability..." : "View available doctors and time slots");
+
   return (
-    <div style={{ margin: "8px 0 16px", border: "1px solid #FECACA", borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 12px rgba(185,28,28,.1)", animation: "slideIn .3s ease" }}>
-      {/* Header */}
-      <div style={{ background: "#0D1B2E", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#F37029", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>P</div>
-        <div>
-          <div style={{ color: "#FFFFFF", fontWeight: 700, fontSize: 13 }}>Connect to a PRISM care coordinator</div>
-          <div style={{ color: "#6B8CAE", fontSize: 11 }}>Available Mon–Fri 8am–8pm · Saturday 9am–2pm</div>
+    <>
+      <div style={{ margin: "8px 0 16px", border: "1px solid #FECACA", borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 12px rgba(185,28,28,.1)", animation: "slideIn .3s ease" }}>
+        <div style={{ background: "#0D1B2E", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#F37029", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>P</div>
+          <div>
+            <div style={{ color: "#FFFFFF", fontWeight: 700, fontSize: 13 }}>Connect to a PRISM care coordinator</div>
+            <div style={{ color: "#6B8CAE", fontSize: 11 }}>Available Mon–Fri 8am–8pm · Saturday 9am–2pm</div>
+          </div>
+        </div>
+
+        <div style={{ background: "#FFFFFF", padding: "8px 0" }}>
+          <ContactRow icon="📞" title="Toll-free call" subtitle={humanAgent.contact?.split("·")[0]?.trim() || "800-PRISM-HEALTH"} />
+          <ContactRow icon="💬" title="WhatsApp coordinator" subtitle={(humanAgent.contact?.split("·")[1]?.trim() || "+52 55 1234-5678") + " · reply in 15 min"} />
+          <ContactRow
+            icon="📅"
+            title="Book doctor appointment"
+            subtitle={nextAvailableLabel}
+            onClick={() => setShowAppointments(true)}
+            clickable
+          />
+        </div>
+
+        <div style={{ background: "#F8FAFC", borderTop: "1px solid #E2E8F0", padding: "8px 16px", fontSize: 10, color: "#94A3B8", lineHeight: 1.5 }}>
+          Your conversation summary has been shared with the care coordinator so you do not need to repeat yourself.
+          IMSS/ISSSTE patients: bring your number. Private: we accept all major plans.
         </div>
       </div>
 
-      {/* Contact options */}
-      <div style={{ background: "#FFFFFF", padding: "8px 0" }}>
-        <ContactRow icon="📞" title="Toll-free call" subtitle={humanAgent.contact?.split("·")[0]?.trim() || "800-PRISM-HEALTH"} />
-        <ContactRow icon="💬" title="WhatsApp coordinator" subtitle={(humanAgent.contact?.split("·")[1]?.trim() || "+52 55 1234-5678") + " · reply in 15 min"} />
-        <ContactRow icon="📅" title="Book doctor appointment" subtitle="Next available: Dr. Ramírez · Tomorrow 10:00" />
-      </div>
+      {activeBooking && (
+        <div style={{
+          margin: "0 0 12px",
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: "1px solid #BBF7D0",
+          background: "#F0FDF4",
+          fontSize: 12,
+          color: "#166534",
+        }}>
+          <strong>Confirmed appointment:</strong> {activeBooking.doctor_name} · {activeBooking.day_label} · {activeBooking.label}
+        </div>
+      )}
 
-      {/* Footer note */}
-      <div style={{ background: "#F8FAFC", borderTop: "1px solid #E2E8F0", padding: "8px 16px", fontSize: 10, color: "#94A3B8", lineHeight: 1.5 }}>
-        Your conversation summary has been shared with the care coordinator so you do not need to repeat yourself.
-        IMSS/ISSSTE patients: bring your number. Private: we accept all major plans.
+      {showAppointments && (
+        <DoctorAppointmentModal
+          disease={disease}
+          agent={agent}
+          availability={availability}
+          loading={loadingSlots}
+          onClose={() => setShowAppointments(false)}
+          onRefresh={loadAvailability}
+          onConfirmBooking={handleConfirmBooking}
+          onBookingConfirmed={(details) => {
+            setShowAppointments(false);
+            setConfirmPopup(details);
+          }}
+        />
+      )}
+
+      {confirmPopup && (
+        <BookingConfirmedPopup
+          details={confirmPopup}
+          onClose={() => setConfirmPopup(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function BookingSummaryBanner({ booking }) {
+  return (
+    <div style={{
+      margin: "8px 0 12px",
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: "1px solid #BBF7D0",
+      background: "#F0FDF4",
+      fontSize: 12,
+      color: "#166534",
+    }}>
+      <strong>Confirmed appointment:</strong> {booking.doctor_name} · {booking.day_label} · {booking.label}
+    </div>
+  );
+}
+
+function EscalationStatusBanner({ type, agent, disease }) {
+  const isHuman = type === "human";
+  return (
+    <div style={{
+      margin: "8px 0 12px",
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: `1px solid ${isHuman ? "#FECACA" : "#FDE68A"}`,
+      background: isHuman ? "#FEF2F2" : "#FFFBEB",
+      fontSize: 12,
+      color: isHuman ? "#991B1B" : "#92400E",
+    }}>
+      <strong>{isHuman ? "Human escalation active" : "Specialist escalation active"}</strong>
+      <div style={{ marginTop: 4 }}>
+        {disease?.name} · {agent?.name || agent?.fullName}
       </div>
     </div>
   );
 }
 
-function ContactRow({ icon, title, subtitle }) {
+function ContactRow({ icon, title, subtitle, onClick, clickable = false }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: "1px solid #F1F5F9" }}>
+    <div
+      onClick={clickable ? onClick : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 16px",
+        borderBottom: "1px solid #F1F5F9",
+        cursor: clickable ? "pointer" : "default",
+        background: clickable ? "#FFFFFF" : "#FFFFFF",
+      }}
+      onMouseEnter={(e) => { if (clickable) e.currentTarget.style.background = "#F8FAFC"; }}
+      onMouseLeave={(e) => { if (clickable) e.currentTarget.style.background = "#FFFFFF"; }}
+    >
       <div style={{ width: 32, height: 32, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{icon}</div>
-      <div>
+      <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>{title}</div>
         <div style={{ fontSize: 11, color: "#64748B" }}>{subtitle}</div>
+      </div>
+      {clickable && <ChevronRight size={16} color="#94A3B8" />}
+    </div>
+  );
+}
+
+function DoctorAppointmentModal({ disease, agent, availability, loading, onClose, onRefresh, onConfirmBooking, onBookingConfirmed }) {
+  const doctors = availability?.doctors || [];
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [isBooking, setIsBooking] = useState(false);
+
+  const slotKey = (doctorId, slot) => `${doctorId}-${slot.slot_start}`;
+  const isSelected = (doctorId, slot) =>
+    selectedSlot && selectedSlot.doctorId === doctorId && selectedSlot.slot.slot_start === slot.slot_start;
+
+  const handleSelectSlot = (doctor, slot) => {
+    if (slot.disabled) return;
+    setSelectedSlot({ doctorId: doctor.id, doctorName: doctor.doctor_name, slot });
+  };
+
+  const handleCancelSelection = () => setSelectedSlot(null);
+
+  const handleBook = async () => {
+    if (!selectedSlot || isBooking) return;
+    setIsBooking(true);
+    try {
+      const data = await onConfirmBooking(selectedSlot.doctorId, selectedSlot.slot);
+      onBookingConfirmed?.({
+        doctor_name: data.doctor_name,
+        day_label: new Date(data.slot_start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+        label: data.label,
+        slot_start: data.slot_start,
+      });
+      setSelectedSlot(null);
+    } catch (e) {
+      const detail = e.response?.data?.detail || e.message || "Booking failed";
+      alert(detail);
+    } finally {
+      setIsBooking(false);
+    }
+  };
+
+  return (
+    <>
+      <div style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: 16,
+      }}>
+        <div style={{
+          width: "min(720px, 100%)", maxHeight: "85vh", overflow: "hidden",
+          background: "#FFFFFF", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+          display: "flex", flexDirection: "column",
+        }}>
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#0F172A" }}>Book doctor appointment</div>
+              <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>
+                {disease?.name} · {agent?.fullName}
+              </div>
+              {availability?.my_booking && (
+                <div style={{ fontSize: 11, color: "#059669", marginTop: 6 }}>
+                  Current booking: {availability.my_booking.doctor_name} · {availability.my_booking.day_label} · {availability.my_booking.label}
+                </div>
+              )}
+            </div>
+            <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 18, color: "#64748B" }}>×</button>
+          </div>
+
+          <div style={{ padding: "16px 20px", overflowY: "auto", flex: 1 }}>
+            {loading ? (
+              <div style={{ fontSize: 13, color: "#64748B" }}>Loading doctor availability...</div>
+            ) : doctors.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#64748B" }}>No doctors found for this therapeutic area.</div>
+            ) : (
+              doctors.map((doctor) => (
+                <div key={doctor.id} style={{ marginBottom: 16, border: "1px solid #E2E8F0", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "12px 14px", background: "#F8FAFC", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#0F172A" }}>{doctor.doctor_name}</div>
+                      <div style={{ fontSize: 11, color: "#64748B" }}>{doctor.therapeutic_area}</div>
+                    </div>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, padding: "4px 8px", borderRadius: 999,
+                      background: doctor.availability === "Yes" ? "#DCFCE7" : "#FEE2E2",
+                      color: doctor.availability === "Yes" ? "#166534" : "#991B1B",
+                    }}>
+                      {doctor.availability === "Yes" ? "Available" : "Unavailable"}
+                    </span>
+                  </div>
+
+                  {doctor.availability === "Yes" ? (
+                    <div style={{ padding: "12px 14px" }}>
+                      <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Next 7 days · 3:30 PM – 5:00 PM slots</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {doctor.slots.map((slot) => {
+                          const key = slotKey(doctor.id, slot);
+                          const selected = isSelected(doctor.id, slot);
+                          const disabled = slot.disabled;
+                          const mine = slot.booked_by_me && !selected;
+                          return (
+                            <button
+                              key={key}
+                              disabled={disabled}
+                              onClick={() => handleSelectSlot(doctor, slot)}
+                              style={{
+                                padding: "8px 10px",
+                                borderRadius: 8,
+                                border: selected ? "2px solid #2563EB" : mine ? "1px solid #34D399" : "1px solid #E2E8F0",
+                                background: disabled ? "#F1F5F9" : selected ? "#EFF6FF" : mine ? "#ECFDF5" : "#FFFFFF",
+                                color: disabled ? "#94A3B8" : "#0F172A",
+                                fontSize: 11,
+                                cursor: disabled ? "not-allowed" : "pointer",
+                                textAlign: "left",
+                                minWidth: 130,
+                                boxShadow: selected ? "0 0 0 2px rgba(37,99,235,0.15)" : "none",
+                              }}
+                            >
+                              <div style={{ fontWeight: 600 }}>{slot.day_label}</div>
+                              <div>{slot.label}</div>
+                              {disabled && <div style={{ color: "#94A3B8", marginTop: 2 }}>Booked</div>}
+                              {mine && <div style={{ color: "#059669", marginTop: 2 }}>Your booking</div>}
+                              {selected && <div style={{ color: "#2563EB", marginTop: 2, fontWeight: 600 }}>Selected</div>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: "12px 14px", fontSize: 12, color: "#94A3B8" }}>
+                      This doctor is not accepting appointments right now.
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {selectedSlot && (
+            <div style={{
+              padding: "12px 20px",
+              borderTop: "1px solid #E2E8F0",
+              background: "#F8FAFC",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}>
+              <div style={{ fontSize: 12, color: "#475569" }}>
+                Selected: <strong>{selectedSlot.doctorName}</strong> · {selectedSlot.slot.day_label} · {selectedSlot.slot.label}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={handleCancelSelection}
+                  disabled={isBooking}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #E2E8F0", background: "#FFFFFF", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBook}
+                  disabled={isBooking}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#2563EB", color: "#FFFFFF", cursor: isBooking ? "wait" : "pointer", fontSize: 12, fontWeight: 600 }}
+                >
+                  {isBooking ? "Booking..." : "Book"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ padding: "12px 20px", borderTop: "1px solid #E2E8F0", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={onRefresh} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E2E8F0", background: "#FFFFFF", cursor: "pointer", fontSize: 12 }}>
+              Refresh
+            </button>
+            <button onClick={onClose} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#0D1B2E", color: "#FFFFFF", cursor: "pointer", fontSize: 12 }}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function BookingConfirmedPopup({ details, onClose }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,0.65)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1100, padding: 16,
+    }}>
+      <div style={{
+        width: "min(400px, 100%)",
+        background: "#FFFFFF",
+        borderRadius: 14,
+        boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        padding: "24px",
+        textAlign: "center",
+      }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "#0F172A", marginBottom: 8 }}>Booking Confirmed</div>
+        <div style={{ fontSize: 13, color: "#64748B", lineHeight: 1.6, marginBottom: 20 }}>
+          Your appointment with <strong>{details.doctor_name}</strong> is confirmed for<br />
+          <strong>{details.day_label}</strong> · <strong>{details.label}</strong>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            padding: "10px 24px", borderRadius: 8, border: "none",
+            background: "#059669", color: "#FFFFFF", cursor: "pointer",
+            fontSize: 13, fontWeight: 600, width: "100%",
+          }}
+        >
+          OK
+        </button>
       </div>
     </div>
   );
@@ -1093,14 +1537,14 @@ function SuggestedQuestions({ questions, onSelect }) {
 }
 
 // ─── Empty State ───────────────────────────────────────────────────────────────
-function EmptyState({ onOpenHistory }) {
+function EmptyState() {
   return (
     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20, color: "#94A3B8", padding: 40 }}>
       <div style={{ fontSize: 64, animation: "bounce 2s infinite" }}>👋</div>
       <div style={{ textAlign: "center", maxWidth: 400 }}>
         <h2 style={{ color: "#F1F5F9", marginBottom: 12 }}>Welcome back to PRISM</h2>
         <p style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 24 }}>
-          You can check your previous conversations in the <strong>Chat History</strong> or select a disease domain from the sidebar to start a new consultation.
+          Select a disease domain from the sidebar to start a consultation with a specialist agent.
         </p>
       </div>
     </div>
@@ -1137,6 +1581,7 @@ function InputBar({ input, setInput, loading, onSend, agentName, agentId, convId
           onAnalysisComplete={onImageAnalysis}
           diseaseColor={diseaseColor}
           diseaseName={diseaseName}
+          compact
         />
         <div
           className="prism-input-field-wrap"
@@ -1198,21 +1643,24 @@ function InputBar({ input, setInput, loading, onSend, agentName, agentId, convId
         <button
           disabled={loading || !input.trim()}
           onClick={() => onSend()}
+          title={t ? t.send : "Send"}
           style={{
             flexShrink: 0,
-            padding: "12px 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 44,
+            height: 44,
             background: loading || !input.trim() ? "var(--border)" : "var(--accent)",
             color: "#fff",
             border: "none",
             borderRadius: 12,
-            fontSize: 13,
-            fontWeight: 700,
             cursor: loading || !input.trim() ? "not-allowed" : "pointer",
             fontFamily: "inherit",
             transition: "all .2s ease",
           }}
         >
-          {t ? t.send : "Send"}
+          <Send size={18} strokeWidth={2.25} />
         </button>
       </div>
       <div style={{ fontSize: 10, color: "#CBD5E1", marginTop: 8, textAlign: "center" }}>

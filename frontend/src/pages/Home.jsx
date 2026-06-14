@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Shield, Activity, ArrowRight, Palette, Smartphone } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useThemeStore } from '../store/theme';
@@ -9,8 +9,30 @@ import PortalClassicHeader from '../Components/PortalClassicHeader';
 
 export default function Home() {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
+  const { user, token } = useAuthStore();
   const { currentTheme, setTheme } = useThemeStore();
+
+  const isPatientLoggedIn = Boolean(token && user && user.role !== 'admin');
+
+  const handleGoToDashboard = () => {
+    if (isPatientLoggedIn) return;
+    if (!token || !user) {
+      navigate('/login?role=admin');
+      return;
+    }
+    navigate('/admin-intro');
+  };
+
+  const isPatientLoggedIn = Boolean(token && user && user.role !== 'admin');
+
+  const handleGoToDashboard = () => {
+    if (isPatientLoggedIn) return;
+    if (!token || !user) {
+      navigate('/login?role=admin');
+      return;
+    }
+    navigate('/admin-intro');
+  };
 
   const themes = THEME_PICKER_OPTIONS;
 
@@ -30,26 +52,25 @@ export default function Home() {
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay" />
       </div>
 
-      <PortalClassicHeader showBack={false}>
-        {!user ? (
-          <Link to="/login" className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-sm font-semibold whitespace-nowrap">
-            Sign In
-          </Link>
-        ) : (
-          <>
-            <div className="hidden md:block text-right leading-tight">
-              <div className="text-[11px] text-[var(--text-dim)] uppercase tracking-wide">Welcome back</div>
-              <div className="text-sm font-bold text-[var(--text-main)] truncate max-w-[200px]">{user.name}</div>
-            </div>
-            <button
-              onClick={() => navigate(user.role === 'admin' ? '/admin-intro' : '/app')}
-              className="px-4 sm:px-5 py-2 rounded-full bg-[var(--accent)] hover:opacity-90 transition-all text-sm font-bold shadow-lg shadow-[var(--accent)]/20 text-white whitespace-nowrap"
-            >
-              Dashboard
-            </button>
-          </>
-        )}
-      </PortalClassicHeader>
+      {/* Header */}
+      <header className="relative z-20 px-8 py-3 flex justify-between items-center max-w-7xl mx-auto w-full">
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl bg-[var(--grad-primary)] flex items-center justify-center font-bold shadow-lg shadow-[var(--accent)]/20 text-white">P</div>
+          <span className="text-2xl font-bold tracking-tight">PRISM</span>
+        </div>
+        <button
+          onClick={handleGoToDashboard}
+          disabled={isPatientLoggedIn}
+          title={isPatientLoggedIn ? 'Admin dashboard is not available while signed in as a patient' : 'Go to admin dashboard'}
+          className={`px-5 py-2 rounded-full transition-all text-sm font-bold text-white
+            ${isPatientLoggedIn
+              ? 'bg-white/10 text-gray-500 cursor-not-allowed opacity-50 shadow-none'
+              : 'bg-[var(--accent)] hover:opacity-90 shadow-lg shadow-[var(--accent)]/20'
+            }`}
+        >
+          Go to Dashboard
+        </button>
+      </header>
 
       {/* Hero */}
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-8 py-2 text-center w-full">

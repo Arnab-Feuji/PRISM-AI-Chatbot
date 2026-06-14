@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { useState, useRef, useCallback } from "react";
+import { Upload } from "lucide-react";
 
 import api from "../services/api";
 
@@ -247,8 +248,14 @@ export default function ImageUpload({
               if (!compact) e.currentTarget.style.transform = "translateY(0)";
             }}
           >
-            <span style={{ fontSize: compact ? 20 : 16 }}>{compact ? "📎" : "📂"}</span>
-            {!compact && " Upload Medical Document"}
+            {compact ? (
+              <Upload size={20} strokeWidth={2} />
+            ) : (
+              <>
+                <Upload size={16} strokeWidth={2} />
+                {" Upload Medical Document"}
+              </>
+            )}
           </button>
           
           {/* Helper Tips */}

@@ -1,7 +1,8 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Layout, Settings, Activity, Shield, Users, LogOut, ChevronRight } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
+import BackButton from './BackButton';
 
 export default function UnifiedNav() {
   const { user, logout } = useAuthStore();
@@ -23,7 +24,8 @@ export default function UnifiedNav() {
 
   return (
     <nav className={`fixed top-0 left-0 right-0 z-[100] h-16 border-b ${isAdmin ? 'border-gray-800' : 'border-white/10'} ${navBg} backdrop-blur-lg px-6 flex items-center justify-between`}>
-      <div className="flex items-center gap-8">
+      <div className="flex items-center gap-4">
+        {!isHome && <BackButton fallbackPath="/" />}
         <Link to="/" className="flex items-center gap-2 group">
           <div className="w-8 h-8 rounded-lg bg-[var(--grad-primary)] flex items-center justify-center font-bold text-white shadow-lg transition-transform group-hover:scale-110">
             P

@@ -682,6 +682,16 @@ def get_visual_offer_text(intent_result: Dict, lang: str = "en") -> str:
             "video": f"🎬 Puedo generar un video corto que demuestra **{intent_result['label']}**.",
             "both":  f"📸🎬 Puedo generar una imagen o video de **{intent_result['label']}**.",
         },
+        "fr": {
+            "image": f"📸 Je peux générer une illustration médicale de **{intent_result['label']}**. Souhaitez-vous la voir ?",
+            "video": f"🎬 Je peux générer une courte vidéo illustrant **{intent_result['label']}**.",
+            "both":  f"📸🎬 Je peux générer une image ou une vidéo de **{intent_result['label']}**.",
+        },
+        "pt": {
+            "image": f"📸 Posso gerar uma ilustração médica de **{intent_result['label']}**. Gostaria de ver?",
+            "video": f"🎬 Posso gerar um vídeo curto demonstrando **{intent_result['label']}**.",
+            "both":  f"📸🎬 Posso gerar uma imagem ou vídeo de **{intent_result['label']}**.",
+        },
         "pa": {
             "image": f"📸 ਮੈਂ **{intent_result['label']}** ਦੀ ਡਾਕਟਰੀ ਤਸਵੀਰ ਬਣਾ ਸਕਦਾ ਹਾਂ। ਕੀ ਤੁਸੀਂ ਦੇਖਣਾ ਚਾਹੋਗੇ?",
             "video": f"🎬 ਮੈਂ **{intent_result['label']}** ਦਾ ਇੱਕ ਛੋਟਾ ਵੀਡੀਓ ਬਣਾ ਸਕਦਾ ਹਾਂ।",

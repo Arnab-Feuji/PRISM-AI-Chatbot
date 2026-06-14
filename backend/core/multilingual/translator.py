@@ -2,12 +2,12 @@
 # FILE: backend/core/multilingual/translator.py
 # PRISM Multilingual Translation Service
 # ───────────────────────────────────────────────────────────────────────────────
-# SUPPORTED LANGUAGES:
+# SUPPORTED LANGUAGES (visible in patient portal: en, es, fr, pt):
 #   en  — English       (default, no translation)
-#   hi  — Hindi         हिंदी
-#   te  — Telugu        తెలుగు
 #   es  — Spanish       Español
-#   pa  — Punjabi       ਪੰਜਾਬੀ
+#   fr  — French        Français
+#   pt  — Portuguese    Português
+# Hidden (backend only): hi, te, pa
 #
 # PIPELINE PER MESSAGE:
 #   1. Detect language & transliteration mode (Roman script → native intent)
@@ -40,6 +40,8 @@ from typing import Dict, Optional, List, Tuple
 from functools import lru_cache
 
 # ─── Language Configuration ────────────────────────────────────────────────────
+HIDDEN_LANGUAGE_CODES = {"hi", "te", "pa"}
+
 SUPPORTED_LANGUAGES: Dict[str, Dict] = {
     "en": {
         "name":        "English",
@@ -48,8 +50,42 @@ SUPPORTED_LANGUAGES: Dict[str, Dict] = {
         "script":      "latin",
         "bcp47":       "en-US",
         "rtl":         False,
+        "visible":     True,
         "greeting":    "Hello! How can I help you today?",
         "transliteration_hint": "Type in English",
+    },
+    "es": {
+        "name":        "Spanish",
+        "native_name": "Español",
+        "flag":        "🇲🇽",
+        "script":      "latin",
+        "bcp47":       "es-MX",
+        "rtl":         False,
+        "visible":     True,
+        "greeting":    "¡Hola! ¿Cómo puedo ayudarte hoy?",
+        "transliteration_hint": "Escribe en español (e.g. tengo dolor en el pecho)",
+    },
+    "fr": {
+        "name":        "French",
+        "native_name": "Français",
+        "flag":        "🇫🇷",
+        "script":      "latin",
+        "bcp47":       "fr-FR",
+        "rtl":         False,
+        "visible":     True,
+        "greeting":    "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
+        "transliteration_hint": "Écrivez en français (e.g. j'ai mal à la poitrine)",
+    },
+    "pt": {
+        "name":        "Portuguese",
+        "native_name": "Português",
+        "flag":        "🇧🇷",
+        "script":      "latin",
+        "bcp47":       "pt-BR",
+        "rtl":         False,
+        "visible":     True,
+        "greeting":    "Olá! Como posso ajudá-lo hoje?",
+        "transliteration_hint": "Escreva em português (e.g. estou com dor no peito)",
     },
     "hi": {
         "name":        "Hindi",
@@ -58,6 +94,7 @@ SUPPORTED_LANGUAGES: Dict[str, Dict] = {
         "script":      "devanagari",
         "bcp47":       "hi-IN",
         "rtl":         False,
+        "visible":     False,
         "greeting":    "नमस्ते! मैं आपकी कैसे मदद कर सकता हूँ?",
         "transliteration_hint": "हिंदी में लिखें या Roman अक्षरों में टाइप करें (e.g. mujhe chest mein dard hai)",
     },
@@ -68,18 +105,9 @@ SUPPORTED_LANGUAGES: Dict[str, Dict] = {
         "script":      "telugu",
         "bcp47":       "te-IN",
         "rtl":         False,
+        "visible":     False,
         "greeting":    "నమస్కారం! నేను మీకు ఎలా సహాయం చేయగలను?",
         "transliteration_hint": "తెలుగులో టైప్ చేయండి లేదా Roman లో రాయండి (e.g. naku chest lo noppi undi)",
-    },
-    "es": {
-        "name":        "Spanish",
-        "native_name": "Español",
-        "flag":        "🇲🇽",
-        "script":      "latin",
-        "bcp47":       "es-MX",
-        "rtl":         False,
-        "greeting":    "¡Hola! ¿Cómo puedo ayudarte hoy?",
-        "transliteration_hint": "Escribe en español (e.g. tengo dolor en el pecho)",
     },
     "pa": {
         "name":        "Punjabi",
@@ -88,6 +116,7 @@ SUPPORTED_LANGUAGES: Dict[str, Dict] = {
         "script":      "gurmukhi",
         "bcp47":       "pa-IN",
         "rtl":         False,
+        "visible":     False,
         "greeting":    "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?",
         "transliteration_hint": "ਪੰਜਾਬੀ ਵਿੱਚ ਲਿਖੋ ਜਾਂ Roman ਵਿੱਚ ਟਾਈਪ ਕਰੋ (e.g. mera sugar level bahut zyada hai)",
     },
@@ -231,8 +260,8 @@ def translate_with_claude(
     from backend.core.agents.base_agent import call_llm_sync
 
     LANG_NAMES = {
-        "en": "English", "hi": "Hindi (Devanagari script)",
-        "te": "Telugu (Telugu script)", "es": "Spanish",
+        "en": "English", "es": "Spanish", "fr": "French", "pt": "Portuguese",
+        "hi": "Hindi (Devanagari script)", "te": "Telugu (Telugu script)",
         "pa": "Punjabi (Gurmukhi script)",
     }
     src_name = LANG_NAMES.get(src_lang, src_lang)
@@ -489,7 +518,7 @@ def process_multilingual_response(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_all_languages() -> List[Dict]:
-    """Return list of all supported languages for the frontend selector."""
+    """Return list of patient-visible languages for the frontend selector."""
     return [
         {
             "code":             code,
@@ -502,6 +531,7 @@ def get_all_languages() -> List[Dict]:
             "greeting":         cfg["greeting"],
         }
         for code, cfg in SUPPORTED_LANGUAGES.items()
+        if cfg.get("visible", code not in HIDDEN_LANGUAGE_CODES)
     ]
 
 
@@ -579,6 +609,34 @@ def get_ui_strings(lang: str) -> Dict:
             "skip":            "ਛੱਡੋ → ਸਿੱਧਾ ਜਵਾਬ ਦਿਓ",
             "question_of":     "ਸਵਾਲ {n} / {max}",
             "feedback_thanks": "ਤੁਹਾਡੀ ਰਾਏ ਲਈ ਧੰਨਵਾਦ!",
+        },
+        "fr": {
+            "placeholder":     "Saisissez votre question médicale…",
+            "send":            "Envoyer",
+            "speak":           "Parler",
+            "scan":            "Scanner une image",
+            "thinking":        "PRISM réfléchit…",
+            "disclaimer":      "Ne remplace pas un avis médical professionnel.",
+            "language_label":  "Langue",
+            "rate_response":   "Évaluer cette réponse",
+            "request_prescription": "Demander une ordonnance",
+            "skip":            "Passer → Répondre maintenant",
+            "question_of":     "Question {n} sur {max}",
+            "feedback_thanks": "Merci pour votre avis !",
+        },
+        "pt": {
+            "placeholder":     "Digite sua pergunta médica…",
+            "send":            "Enviar",
+            "speak":           "Falar",
+            "scan":            "Escanear imagem",
+            "thinking":        "PRISM está pensando…",
+            "disclaimer":      "Não substitui o aconselhamento médico profissional.",
+            "language_label":  "Idioma",
+            "rate_response":   "Avaliar esta resposta",
+            "request_prescription": "Solicitar receita",
+            "skip":            "Pular → Responder agora",
+            "question_of":     "Pergunta {n} de {max}",
+            "feedback_thanks": "Obrigado pelo seu feedback!",
         },
     }
     return STRINGS.get(lang, STRINGS["en"])

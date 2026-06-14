@@ -288,6 +288,7 @@ export default function VoiceChat({
         onMessageAdded({
           role: "user", content: editedText, isVoice: true,
           voiceData: { transcript, f1Score: voiceData?.f1_score },
+          created_at: new Date().toISOString(),
         });
         onMessageAdded({
           role: "assistant", content: data.response, isVoice: true,
