@@ -20,6 +20,8 @@ import difflib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
+from backend.core.conversation.conversation_restore import build_restore_context
+
 # ─── Configuration ─────────────────────────────────────────────────────────────
 HISTORY_DAYS      = 15       # Retention window in days
 SNIPPET_LENGTH    = 120      # Characters for conversation preview snippet
@@ -692,6 +694,8 @@ async def get_conversation_messages(
 
     expires_in = max(0, HISTORY_DAYS - _age_days(conv.updated_at))
 
+    restore_ctx = await build_restore_context(db, conv=conv, messages=messages, user_id=user_id)
+
     return {
         "found":     True,
         "conversation": {
@@ -712,8 +716,12 @@ async def get_conversation_messages(
             "total_messages": len(messages),
             "expires_in_days": expires_in,
             "escalated":    getattr(conv, "escalated", False),
+            "escalation_state": restore_ctx["escalation_state"],
+            "my_booking":   restore_ctx["my_booking"],
         },
         "messages":  msg_list,
+        "escalation_state": restore_ctx["escalation_state"],
+        "my_booking": restore_ctx["my_booking"],
     }
 
 

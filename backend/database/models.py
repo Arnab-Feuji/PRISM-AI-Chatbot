@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     String, Integer, Float, Boolean, Text, DateTime,
-    ForeignKey, JSON, Enum as SAEnum, text
+    ForeignKey, JSON, Enum as SAEnum, UniqueConstraint, text
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, create_async_engine, async_sessionmaker
@@ -297,6 +297,46 @@ class AgentQuestion(Base):
     created_at:     Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class DoctorDetail(Base):
+    __tablename__ = "doctor_details"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    doctor_name: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    disease_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    therapeutic_area: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    availability: Mapped[str] = mapped_column(String(10), nullable=False)
+    time1: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    time2: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    time3: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    bookings: Mapped[list["DoctorAppointmentBooking"]] = relationship(
+        back_populates="doctor", lazy="select"
+    )
+
+
+class DoctorAppointmentBooking(Base):
+    __tablename__ = "doctor_appointment_bookings"
+    __table_args__ = (
+        UniqueConstraint("doctor_detail_id", "slot_start", name="uq_doctor_slot_start"),
+        UniqueConstraint("user_id", "agent_id", name="uq_user_agent_booking"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    doctor_detail_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("doctor_details.id"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    slot_start: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    slot_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    doctor: Mapped["DoctorDetail"] = relationship(back_populates="bookings")
+
+
 async def create_tables():
     async with engine.begin() as conn:
         print(f"[DB] Connected to database engine: {engine.url.render_as_string(hide_password=True)}")
@@ -415,7 +455,35 @@ async def create_tables():
              "  duration_s INTEGER, "
              "  clip_count INTEGER, "
              "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-             ")")
+             ")"),
+
+            ("doctor_details time1 timestamp",
+             "ALTER TABLE doctor_details ALTER COLUMN time1 TYPE TIMESTAMP "
+             "USING TIMESTAMP '2000-01-01 15:30:00'"),
+            ("doctor_details time2 timestamp",
+             "ALTER TABLE doctor_details ALTER COLUMN time2 TYPE TIMESTAMP "
+             "USING TIMESTAMP '2000-01-01 16:00:00'"),
+            ("doctor_details time3 timestamp",
+             "ALTER TABLE doctor_details ALTER COLUMN time3 TYPE TIMESTAMP "
+             "USING TIMESTAMP '2000-01-01 16:30:00'"),
+            ("doctor_appointment_bookings table",
+             "CREATE TABLE IF NOT EXISTS doctor_appointment_bookings ("
+             "  id VARCHAR(36) PRIMARY KEY, "
+             "  doctor_detail_id VARCHAR(36) NOT NULL REFERENCES doctor_details(id), "
+             "  user_id VARCHAR(36) NOT NULL REFERENCES users(id), "
+             "  conversation_id VARCHAR(36), "
+             "  slot_start TIMESTAMP NOT NULL, "
+             "  slot_end TIMESTAMP NOT NULL, "
+             "  slot_number INTEGER NOT NULL, "
+             "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+             "  UNIQUE (doctor_detail_id, slot_start)"
+             ")"),
+            ("doctor_appointment_bookings agent_id",
+             "ALTER TABLE doctor_appointment_bookings ADD COLUMN IF NOT EXISTS agent_id VARCHAR(20)"),
+            ("doctor_appointment_bookings user agent unique",
+             "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_agent_booking "
+             "ON doctor_appointment_bookings (user_id, agent_id) "
+             "WHERE agent_id IS NOT NULL AND TRIM(agent_id) <> ''"),
         ]
         
         for label, stmt in statements:
@@ -429,6 +497,13 @@ async def create_tables():
                     print(f"[DB_MIGRATION_WARNING] Could not execute {label} migration: {e}")
         
         print("[DB] Database migration check complete.")
+
+    from backend.core.appointments.doctor_appointments import backfill_missing_booking_agent_ids
+    async with AsyncSession() as session:
+        try:
+            await backfill_missing_booking_agent_ids(session)
+        except Exception as e:
+            print(f"[DB_MIGRATION_WARNING] Could not backfill booking agent_id values: {e}")
 
 
 async def get_db():

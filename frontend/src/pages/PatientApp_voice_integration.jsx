@@ -142,6 +142,7 @@ export default function PatientApp() {
   const [humanAgent, setHumanAgent]           = useState(null);
   const [confidence, setConfidence]           = useState(null);
   const [showHumanCard, setShowHumanCard]     = useState(false);
+  const [restoredBooking, setRestoredBooking] = useState(null);
 
   // Conversational Engine state
   const [isAskingQuestions, setIsAskingQuestions] = useState(false);
@@ -216,6 +217,30 @@ export default function PatientApp() {
     }
   }, [messages]);
 
+  const applyRestoreContext = useCallback((data) => {
+    const escalation = data?.escalation_state || data?.conversation?.escalation_state;
+    const myBooking = data?.my_booking || data?.conversation?.my_booking || null;
+
+    if (escalation?.route_decision) {
+      setEscalationData(escalation.escalation_monitor || null);
+      setRouteDecision(escalation.route_decision);
+      setSpecialistAgent(escalation.specialist_agent || null);
+      setHumanAgent(escalation.human_agent || null);
+      setConfidence(escalation.confidence ?? null);
+      setShowHumanCard(escalation.route_decision === "human");
+    } else {
+      setEscalationData(null);
+      setRouteDecision("primary");
+      setSpecialistAgent(null);
+      setHumanAgent(null);
+      setConfidence(null);
+      setShowHumanCard(false);
+    }
+
+    setRestoredBooking(myBooking);
+    return myBooking;
+  }, []);
+
   const handleRestoreConversation = useCallback((data, options = {}) => {
     const { conversation, messages: histMessages } = data;
     if (!conversation) return;
@@ -246,6 +271,8 @@ export default function PatientApp() {
       genericSupport:    m.generic_support || [],
       responseFormat:    m.response_format,
       intent:            m.intent,
+      routeDecision:     m.route_decision,
+      frustration:       m.frustration,
     })));
 
     if (scrollToMessageId) {
@@ -253,14 +280,8 @@ export default function PatientApp() {
     }
 
     setIsHistoryHidden(conversation.is_hidden || false);
-
-    setEscalationData(null);
-    setRouteDecision("primary");
-    setSpecialistAgent(null);
-    setHumanAgent(null);
-    setConfidence(null);
-    setShowHumanCard(false);
-  }, []);
+    applyRestoreContext(data);
+  }, [applyRestoreContext]);
 
   // Reset escalation state when agent changes + Resume Session Logic
   const selectAgent = useCallback(async (disease, agent) => {
@@ -277,6 +298,7 @@ export default function PatientApp() {
     setHumanAgent(null);
     setConfidence(null);
     setShowHumanCard(false);
+    setRestoredBooking(null);
     setDynamicQuestions([]); 
 
     try {
@@ -446,6 +468,9 @@ export default function PatientApp() {
 
       if (data.route_decision === "human") {
         setShowHumanCard(true);
+      }
+      if (data.my_booking) {
+        setRestoredBooking(data.my_booking);
       }
 
       setMessages(m => {
@@ -688,13 +713,31 @@ export default function PatientApp() {
             </div>
           ))}
 
-          {/* Human Coordinator Card — appears after human escalation */}
+          {/* Human Coordinator Card — appears after human escalation or on restore */}
           {showHumanCard && humanAgent && routeDecision === "human" && (
             <HumanCoordinatorCard
               humanAgent={humanAgent}
               disease={selDisease}
+              agent={selAgent}
+              conversationId={convId}
+              initialBooking={restoredBooking}
+              onBookingUpdate={setRestoredBooking}
               onDismiss={() => setShowHumanCard(false)}
             />
+          )}
+
+          {/* Specialist escalation banner on restore */}
+          {routeDecision === "specialist" && specialistAgent && messages.length > 0 && (
+            <EscalationStatusBanner
+              type="specialist"
+              agent={specialistAgent}
+              disease={selDisease}
+            />
+          )}
+
+          {/* Booking summary when not shown inside human coordinator card */}
+          {restoredBooking && routeDecision !== "human" && (
+            <BookingSummaryBanner booking={restoredBooking} />
           )}
 
           {/* Loading indicator */}
@@ -1014,41 +1057,419 @@ function AgentHeaderBar({ agent, disease, routeDecision, confidence, user, onLog
 
 
 // ─── Human Coordinator Card ────────────────────────────────────────────────────
-function HumanCoordinatorCard({ humanAgent, disease, onDismiss }) {
+function HumanCoordinatorCard({ humanAgent, disease, agent, conversationId, initialBooking, onBookingUpdate, onDismiss }) {
+  const [showAppointments, setShowAppointments] = useState(false);
+  const [confirmPopup, setConfirmPopup] = useState(null);
+  const [availability, setAvailability] = useState(
+    initialBooking ? { my_booking: initialBooking, doctors: [] } : null
+  );
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
+  const diseaseQueryName = disease?.code === "MH" ? "Mental Illness" : disease?.name;
+  const therapeuticArea = agent?.fullName;
+
+  const loadAvailability = useCallback(async () => {
+    if (!diseaseQueryName || !therapeuticArea) return;
+    setLoadingSlots(true);
+    try {
+      const { data } = await api.get("/appointments/doctors", {
+        params: {
+          disease_name: diseaseQueryName,
+          therapeutic_area: therapeuticArea,
+          days: 7,
+        },
+      });
+      setAvailability(data);
+    } catch (e) {
+      console.error("Failed to load doctor availability:", e);
+      setAvailability({ doctors: [], next_available: null, my_booking: initialBooking || null });
+    } finally {
+      setLoadingSlots(false);
+    }
+  }, [diseaseQueryName, therapeuticArea, initialBooking]);
+
+  useEffect(() => {
+    if (initialBooking) {
+      setAvailability(prev => ({ ...(prev || {}), my_booking: initialBooking }));
+    }
+  }, [initialBooking]);
+
+  useEffect(() => {
+    loadAvailability();
+  }, [loadAvailability]);
+
+  const handleConfirmBooking = async (doctorId, slot) => {
+    const { data } = await api.post("/appointments/book", {
+      agent_id: agent?.id,
+      doctor_detail_id: doctorId,
+      slot_start: slot.slot_start,
+      conversation_id: conversationId || undefined,
+    });
+    await loadAvailability();
+    if (onBookingUpdate) {
+      onBookingUpdate({
+        booking_id: data.booking_id,
+        doctor_id: doctorId,
+        doctor_name: data.doctor_name,
+        disease_name: data.disease_name,
+        therapeutic_area: data.therapeutic_area,
+        slot_start: data.slot_start,
+        slot_end: data.slot_end,
+        label: data.label,
+        day_label: new Date(data.slot_start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+        conversation_id: conversationId,
+      });
+    }
+    return data;
+  };
+
+  const activeBooking = availability?.my_booking || initialBooking;
+  const nextAvailableLabel = activeBooking
+    ? `Your booking: ${activeBooking.doctor_name} · ${activeBooking.day_label} · ${activeBooking.label}`
+    : availability?.next_available?.label
+    || (loadingSlots ? "Loading availability..." : "View available doctors and time slots");
+
   return (
-    <div style={{ margin: "8px 0 16px", border: "1px solid #FECACA", borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 12px rgba(185,28,28,.1)", animation: "slideIn .3s ease" }}>
-      {/* Header */}
-      <div style={{ background: "#0D1B2E", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#F37029", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>P</div>
-        <div>
-          <div style={{ color: "#FFFFFF", fontWeight: 700, fontSize: 13 }}>Connect to a PRISM care coordinator</div>
-          <div style={{ color: "#6B8CAE", fontSize: 11 }}>Available Mon–Fri 8am–8pm · Saturday 9am–2pm</div>
+    <>
+      <div style={{ margin: "8px 0 16px", border: "1px solid #FECACA", borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 12px rgba(185,28,28,.1)", animation: "slideIn .3s ease" }}>
+        <div style={{ background: "#0D1B2E", padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#F37029", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16 }}>P</div>
+          <div>
+            <div style={{ color: "#FFFFFF", fontWeight: 700, fontSize: 13 }}>Connect to a PRISM care coordinator</div>
+            <div style={{ color: "#6B8CAE", fontSize: 11 }}>Available Mon–Fri 8am–8pm · Saturday 9am–2pm</div>
+          </div>
+        </div>
+
+        <div style={{ background: "#FFFFFF", padding: "8px 0" }}>
+          <ContactRow icon="📞" title="Toll-free call" subtitle={humanAgent.contact?.split("·")[0]?.trim() || "800-PRISM-HEALTH"} />
+          <ContactRow icon="💬" title="WhatsApp coordinator" subtitle={(humanAgent.contact?.split("·")[1]?.trim() || "+52 55 1234-5678") + " · reply in 15 min"} />
+          <ContactRow
+            icon="📅"
+            title="Book doctor appointment"
+            subtitle={nextAvailableLabel}
+            onClick={() => setShowAppointments(true)}
+            clickable
+          />
+        </div>
+
+        <div style={{ background: "#F8FAFC", borderTop: "1px solid #E2E8F0", padding: "8px 16px", fontSize: 10, color: "#94A3B8", lineHeight: 1.5 }}>
+          Your conversation summary has been shared with the care coordinator so you do not need to repeat yourself.
+          IMSS/ISSSTE patients: bring your number. Private: we accept all major plans.
         </div>
       </div>
 
-      {/* Contact options */}
-      <div style={{ background: "#FFFFFF", padding: "8px 0" }}>
-        <ContactRow icon="📞" title="Toll-free call" subtitle={humanAgent.contact?.split("·")[0]?.trim() || "800-PRISM-HEALTH"} />
-        <ContactRow icon="💬" title="WhatsApp coordinator" subtitle={(humanAgent.contact?.split("·")[1]?.trim() || "+52 55 1234-5678") + " · reply in 15 min"} />
-        <ContactRow icon="📅" title="Book doctor appointment" subtitle="Next available: Dr. Ramírez · Tomorrow 10:00" />
-      </div>
+      {activeBooking && (
+        <div style={{
+          margin: "0 0 12px",
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: "1px solid #BBF7D0",
+          background: "#F0FDF4",
+          fontSize: 12,
+          color: "#166534",
+        }}>
+          <strong>Confirmed appointment:</strong> {activeBooking.doctor_name} · {activeBooking.day_label} · {activeBooking.label}
+        </div>
+      )}
 
-      {/* Footer note */}
-      <div style={{ background: "#F8FAFC", borderTop: "1px solid #E2E8F0", padding: "8px 16px", fontSize: 10, color: "#94A3B8", lineHeight: 1.5 }}>
-        Your conversation summary has been shared with the care coordinator so you do not need to repeat yourself.
-        IMSS/ISSSTE patients: bring your number. Private: we accept all major plans.
+      {showAppointments && (
+        <DoctorAppointmentModal
+          disease={disease}
+          agent={agent}
+          availability={availability}
+          loading={loadingSlots}
+          onClose={() => setShowAppointments(false)}
+          onRefresh={loadAvailability}
+          onConfirmBooking={handleConfirmBooking}
+          onBookingConfirmed={(details) => {
+            setShowAppointments(false);
+            setConfirmPopup(details);
+          }}
+        />
+      )}
+
+      {confirmPopup && (
+        <BookingConfirmedPopup
+          details={confirmPopup}
+          onClose={() => setConfirmPopup(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function BookingSummaryBanner({ booking }) {
+  return (
+    <div style={{
+      margin: "8px 0 12px",
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: "1px solid #BBF7D0",
+      background: "#F0FDF4",
+      fontSize: 12,
+      color: "#166534",
+    }}>
+      <strong>Confirmed appointment:</strong> {booking.doctor_name} · {booking.day_label} · {booking.label}
+    </div>
+  );
+}
+
+function EscalationStatusBanner({ type, agent, disease }) {
+  const isHuman = type === "human";
+  return (
+    <div style={{
+      margin: "8px 0 12px",
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: `1px solid ${isHuman ? "#FECACA" : "#FDE68A"}`,
+      background: isHuman ? "#FEF2F2" : "#FFFBEB",
+      fontSize: 12,
+      color: isHuman ? "#991B1B" : "#92400E",
+    }}>
+      <strong>{isHuman ? "Human escalation active" : "Specialist escalation active"}</strong>
+      <div style={{ marginTop: 4 }}>
+        {disease?.name} · {agent?.name || agent?.fullName}
       </div>
     </div>
   );
 }
 
-function ContactRow({ icon, title, subtitle }) {
+function ContactRow({ icon, title, subtitle, onClick, clickable = false }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: "1px solid #F1F5F9" }}>
+    <div
+      onClick={clickable ? onClick : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 16px",
+        borderBottom: "1px solid #F1F5F9",
+        cursor: clickable ? "pointer" : "default",
+        background: clickable ? "#FFFFFF" : "#FFFFFF",
+      }}
+      onMouseEnter={(e) => { if (clickable) e.currentTarget.style.background = "#F8FAFC"; }}
+      onMouseLeave={(e) => { if (clickable) e.currentTarget.style.background = "#FFFFFF"; }}
+    >
       <div style={{ width: 32, height: 32, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{icon}</div>
-      <div>
+      <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>{title}</div>
         <div style={{ fontSize: 11, color: "#64748B" }}>{subtitle}</div>
+      </div>
+      {clickable && <ChevronRight size={16} color="#94A3B8" />}
+    </div>
+  );
+}
+
+function DoctorAppointmentModal({ disease, agent, availability, loading, onClose, onRefresh, onConfirmBooking, onBookingConfirmed }) {
+  const doctors = availability?.doctors || [];
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [isBooking, setIsBooking] = useState(false);
+
+  const slotKey = (doctorId, slot) => `${doctorId}-${slot.slot_start}`;
+  const isSelected = (doctorId, slot) =>
+    selectedSlot && selectedSlot.doctorId === doctorId && selectedSlot.slot.slot_start === slot.slot_start;
+
+  const handleSelectSlot = (doctor, slot) => {
+    if (slot.disabled) return;
+    setSelectedSlot({ doctorId: doctor.id, doctorName: doctor.doctor_name, slot });
+  };
+
+  const handleCancelSelection = () => setSelectedSlot(null);
+
+  const handleBook = async () => {
+    if (!selectedSlot || isBooking) return;
+    setIsBooking(true);
+    try {
+      const data = await onConfirmBooking(selectedSlot.doctorId, selectedSlot.slot);
+      onBookingConfirmed?.({
+        doctor_name: data.doctor_name,
+        day_label: new Date(data.slot_start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+        label: data.label,
+        slot_start: data.slot_start,
+      });
+      setSelectedSlot(null);
+    } catch (e) {
+      const detail = e.response?.data?.detail || e.message || "Booking failed";
+      alert(detail);
+    } finally {
+      setIsBooking(false);
+    }
+  };
+
+  return (
+    <>
+      <div style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: 16,
+      }}>
+        <div style={{
+          width: "min(720px, 100%)", maxHeight: "85vh", overflow: "hidden",
+          background: "#FFFFFF", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+          display: "flex", flexDirection: "column",
+        }}>
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#0F172A" }}>Book doctor appointment</div>
+              <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>
+                {disease?.name} · {agent?.fullName}
+              </div>
+              {availability?.my_booking && (
+                <div style={{ fontSize: 11, color: "#059669", marginTop: 6 }}>
+                  Current booking: {availability.my_booking.doctor_name} · {availability.my_booking.day_label} · {availability.my_booking.label}
+                </div>
+              )}
+            </div>
+            <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 18, color: "#64748B" }}>×</button>
+          </div>
+
+          <div style={{ padding: "16px 20px", overflowY: "auto", flex: 1 }}>
+            {loading ? (
+              <div style={{ fontSize: 13, color: "#64748B" }}>Loading doctor availability...</div>
+            ) : doctors.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#64748B" }}>No doctors found for this therapeutic area.</div>
+            ) : (
+              doctors.map((doctor) => (
+                <div key={doctor.id} style={{ marginBottom: 16, border: "1px solid #E2E8F0", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "12px 14px", background: "#F8FAFC", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#0F172A" }}>{doctor.doctor_name}</div>
+                      <div style={{ fontSize: 11, color: "#64748B" }}>{doctor.therapeutic_area}</div>
+                    </div>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, padding: "4px 8px", borderRadius: 999,
+                      background: doctor.availability === "Yes" ? "#DCFCE7" : "#FEE2E2",
+                      color: doctor.availability === "Yes" ? "#166534" : "#991B1B",
+                    }}>
+                      {doctor.availability === "Yes" ? "Available" : "Unavailable"}
+                    </span>
+                  </div>
+
+                  {doctor.availability === "Yes" ? (
+                    <div style={{ padding: "12px 14px" }}>
+                      <div style={{ fontSize: 11, color: "#64748B", marginBottom: 8 }}>Next 7 days · 3:30 PM – 5:00 PM slots</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {doctor.slots.map((slot) => {
+                          const key = slotKey(doctor.id, slot);
+                          const selected = isSelected(doctor.id, slot);
+                          const disabled = slot.disabled;
+                          const mine = slot.booked_by_me && !selected;
+                          return (
+                            <button
+                              key={key}
+                              disabled={disabled}
+                              onClick={() => handleSelectSlot(doctor, slot)}
+                              style={{
+                                padding: "8px 10px",
+                                borderRadius: 8,
+                                border: selected ? "2px solid #2563EB" : mine ? "1px solid #34D399" : "1px solid #E2E8F0",
+                                background: disabled ? "#F1F5F9" : selected ? "#EFF6FF" : mine ? "#ECFDF5" : "#FFFFFF",
+                                color: disabled ? "#94A3B8" : "#0F172A",
+                                fontSize: 11,
+                                cursor: disabled ? "not-allowed" : "pointer",
+                                textAlign: "left",
+                                minWidth: 130,
+                                boxShadow: selected ? "0 0 0 2px rgba(37,99,235,0.15)" : "none",
+                              }}
+                            >
+                              <div style={{ fontWeight: 600 }}>{slot.day_label}</div>
+                              <div>{slot.label}</div>
+                              {disabled && <div style={{ color: "#94A3B8", marginTop: 2 }}>Booked</div>}
+                              {mine && <div style={{ color: "#059669", marginTop: 2 }}>Your booking</div>}
+                              {selected && <div style={{ color: "#2563EB", marginTop: 2, fontWeight: 600 }}>Selected</div>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: "12px 14px", fontSize: 12, color: "#94A3B8" }}>
+                      This doctor is not accepting appointments right now.
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {selectedSlot && (
+            <div style={{
+              padding: "12px 20px",
+              borderTop: "1px solid #E2E8F0",
+              background: "#F8FAFC",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}>
+              <div style={{ fontSize: 12, color: "#475569" }}>
+                Selected: <strong>{selectedSlot.doctorName}</strong> · {selectedSlot.slot.day_label} · {selectedSlot.slot.label}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={handleCancelSelection}
+                  disabled={isBooking}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #E2E8F0", background: "#FFFFFF", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBook}
+                  disabled={isBooking}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#2563EB", color: "#FFFFFF", cursor: isBooking ? "wait" : "pointer", fontSize: 12, fontWeight: 600 }}
+                >
+                  {isBooking ? "Booking..." : "Book"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ padding: "12px 20px", borderTop: "1px solid #E2E8F0", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={onRefresh} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E2E8F0", background: "#FFFFFF", cursor: "pointer", fontSize: 12 }}>
+              Refresh
+            </button>
+            <button onClick={onClose} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#0D1B2E", color: "#FFFFFF", cursor: "pointer", fontSize: 12 }}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function BookingConfirmedPopup({ details, onClose }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,0.65)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1100, padding: 16,
+    }}>
+      <div style={{
+        width: "min(400px, 100%)",
+        background: "#FFFFFF",
+        borderRadius: 14,
+        boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        padding: "24px",
+        textAlign: "center",
+      }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "#0F172A", marginBottom: 8 }}>Booking Confirmed</div>
+        <div style={{ fontSize: 13, color: "#64748B", lineHeight: 1.6, marginBottom: 20 }}>
+          Your appointment with <strong>{details.doctor_name}</strong> is confirmed for<br />
+          <strong>{details.day_label}</strong> · <strong>{details.label}</strong>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            padding: "10px 24px", borderRadius: 8, border: "none",
+            background: "#059669", color: "#FFFFFF", cursor: "pointer",
+            fontSize: 13, fontWeight: 600, width: "100%",
+          }}
+        >
+          OK
+        </button>
       </div>
     </div>
   );

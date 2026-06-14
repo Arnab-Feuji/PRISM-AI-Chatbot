@@ -64,6 +64,11 @@ from backend.database.models import (
     PatientFeedback, IndexedDocument, LLMCallLog, RAGASMetric,
     SystemAlert, PreRAGResult, ImageUpload, AsyncSession as AsyncSessionFactory
 )
+from backend.core.conversation.conversation_restore import build_restore_context
+from backend.core.appointments.doctor_appointments import (
+    get_doctor_availability,
+    book_doctor_slot,
+)
 from backend.middleware.auth import (
     hash_password, verify_password, create_token,
     get_current_user, require_admin,
@@ -503,6 +508,45 @@ async def subscribe(req: SubscribeRequest, current: dict = Depends(get_current_u
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# CONVERSATION RESTORE HELPERS
+# ═══════════════════════════════════════════════════════════════════════════
+def _serialize_messages(msgs):
+    return [{
+        "id": m.id, "role": m.role, "content": m.content,
+        "agent_id": m.agent_id, "confidence": m.confidence,
+        "frustration": getattr(m, "frustration", 0),
+        "citations": m.citations, "created_at": m.created_at.isoformat(),
+        "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
+        "follow_up_questions": m.follow_up_questions,
+        "generic_support": m.generic_support,
+        "response_format": m.response_format,
+        "intent": m.intent,
+        "visual_payload": m.visual_payload,
+        "route_decision": (
+            "human" if (m.agent_id or "").upper().endswith("-H")
+            else "specialist" if (m.agent_id or "").upper().endswith("-S")
+            else "primary"
+        ) if m.role == "assistant" else None,
+    } for m in msgs]
+
+
+async def _build_conversation_payload(conv, msgs, user_id, db):
+    restore_ctx = await build_restore_context(db, conv=conv, messages=msgs, user_id=user_id)
+    return {
+        "conversation": {
+            "id": conv.id, "title": conv.title, "disease_code": conv.disease_code,
+            "agent_id": conv.agent_id, "updated_at": conv.updated_at.isoformat(),
+            "is_hidden": conv.is_hidden, "escalated": getattr(conv, "escalated", False),
+            "escalation_state": restore_ctx["escalation_state"],
+            "my_booking": restore_ctx["my_booking"],
+        },
+        "messages": _serialize_messages(msgs),
+        "escalation_state": restore_ctx["escalation_state"],
+        "my_booking": restore_ctx["my_booking"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # CONVERSATIONS
 # ═══════════════════════════════════════════════════════════════════════════
 @app.get("/api/conversations")
@@ -548,25 +592,7 @@ async def get_last_active_conversation(current: dict = Depends(get_current_user)
     
     msg_res = await db.execute(select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at))
     msgs = msg_res.scalars().all()
-    
-    return {
-        "conversation": {
-            "id": conv.id, "title": conv.title, "disease_code": conv.disease_code,
-            "agent_id": conv.agent_id, "updated_at": conv.updated_at.isoformat(),
-            "is_hidden": conv.is_hidden
-        },
-        "messages": [{
-            "id": m.id, "role": m.role, "content": m.content,
-            "agent_id": m.agent_id, "confidence": m.confidence,
-            "citations": m.citations, "created_at": m.created_at.isoformat(),
-            "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
-            "follow_up_questions": m.follow_up_questions,
-            "generic_support": m.generic_support,
-            "response_format": m.response_format,
-            "intent": m.intent,
-            "visual_payload": m.visual_payload
-        } for m in msgs]
-    }
+    return await _build_conversation_payload(conv, msgs, current["user_id"], db)
 
 
 @app.get("/api/conversations/resume/{agent_id}")
@@ -589,25 +615,7 @@ async def resume_agent_conversation(agent_id: str, current: dict = Depends(get_c
     
     msg_res = await db.execute(select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at))
     msgs = msg_res.scalars().all()
-    
-    return {
-        "conversation": {
-            "id": conv.id, "title": conv.title, "disease_code": conv.disease_code,
-            "agent_id": conv.agent_id, "updated_at": conv.updated_at.isoformat(),
-            "is_hidden": conv.is_hidden
-        },
-        "messages": [{
-            "id": m.id, "role": m.role, "content": m.content,
-            "agent_id": m.agent_id, "confidence": m.confidence,
-            "citations": m.citations, "created_at": m.created_at.isoformat(),
-            "timestamp_label": _format_timestamp(m.created_at) if m.created_at else "",
-            "follow_up_questions": m.follow_up_questions,
-            "generic_support": m.generic_support,
-            "response_format": m.response_format,
-            "intent": m.intent,
-            "visual_payload": m.visual_payload
-        } for m in msgs]
-    }
+    return await _build_conversation_payload(conv, msgs, current["user_id"], db)
 
 
 @app.post("/api/conversations/{conv_id}/toggle-visibility")
@@ -620,6 +628,56 @@ async def toggle_conversation_visibility(conv_id: str, current: dict = Depends(g
     conv.is_hidden = not conv.is_hidden
     await db.commit()
     return {"id": conv.id, "is_hidden": conv.is_hidden}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOCTOR APPOINTMENTS
+# ═══════════════════════════════════════════════════════════════════════════
+class BookAppointmentRequest(BaseModel):
+    agent_id: str
+    doctor_detail_id: str
+    slot_start: str
+    conversation_id: Optional[str] = None
+
+
+@app.get("/api/appointments/doctors")
+async def list_doctor_appointments(
+    disease_name: str,
+    therapeutic_area: str,
+    days: int = 7,
+    current: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_doctor_availability(
+        db,
+        disease_name=disease_name,
+        therapeutic_area=therapeutic_area,
+        user_id=current["user_id"],
+        days=days,
+    )
+
+
+@app.post("/api/appointments/book")
+async def book_doctor_appointment(
+    req: BookAppointmentRequest,
+    current: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        slot_start = datetime.fromisoformat(req.slot_start.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, "Invalid slot_start timestamp")
+    if slot_start.tzinfo is not None:
+        slot_start = slot_start.replace(tzinfo=None)
+
+    return await book_doctor_slot(
+        db,
+        user_id=current["user_id"],
+        agent_id=req.agent_id,
+        doctor_detail_id=req.doctor_detail_id,
+        slot_start=slot_start,
+        conversation_id=req.conversation_id,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1126,9 +1184,18 @@ async def chat(
     ))
     conv.total_messages = (conv.total_messages or 0) + 2
     conv.updated_at     = datetime.utcnow()
-    conv.meta_json      = meta
     if routing_result["escalation_active"]:
         conv.escalated = True
+    meta["escalation_state"] = {
+        "route_decision": route,
+        "escalation_active": routing_result["escalation_active"],
+        "escalation_monitor": routing_result["escalation_monitor"],
+        "specialist_agent": routing_result["specialist_agent"],
+        "human_agent": routing_result["human_agent"],
+        "confidence": actual_confidence,
+        "frustration_score": routing_result["frustration_score"],
+    }
+    conv.meta_json = meta
 
     # ── Persist Metrics (RAGAS, LLM Calls, Escalations) ─────────────────────
     tracker = MetricsTracker(db)
